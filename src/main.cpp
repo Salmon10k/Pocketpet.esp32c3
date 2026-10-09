@@ -72,31 +72,41 @@ bool mpuRead() {
 // ---------------- Buttons ----------------
 struct Button {
   uint8_t pin;
-  bool lastRaw;
   bool stable;
+  bool lastRaw;
   uint32_t changedAt;
+  bool pressEvent;
 };
 
-Button btnA = {PIN_BTN_A, true, true, 0};
-Button btnB = {PIN_BTN_B, true, true, 0};
-Button btnC = {PIN_BTN_C, true, true, 0};
+Button btnA = {PIN_BTN_A, HIGH, HIGH, 0, false};
+Button btnB = {PIN_BTN_B, HIGH, HIGH, 0, false};
+Button btnC = {PIN_BTN_C, HIGH, HIGH, 0, false};
 
-// Returns true once on each press (active low).
-bool pressed(Button &b) {
+void updateButton(Button &b) {
   bool raw = digitalRead(b.pin);
   uint32_t now = millis();
 
+  // Start/restart debounce whenever the electrical state changes.
   if (raw != b.lastRaw) {
     b.lastRaw = raw;
     b.changedAt = now;
   }
 
-  if (now - b.changedAt > 25 && raw != b.stable) {
+  // Once stable for 30 ms, accept the new state.
+  if ((now - b.changedAt) >= 30 && raw != b.stable) {
     b.stable = raw;
-    if (!b.stable) return true;
-  }
 
-  return false;
+    // Buttons are wired to GND, so LOW is a press.
+    if (b.stable == LOW) {
+      b.pressEvent = true;
+    }
+  }
+}
+
+bool pressed(Button &b) {
+  bool event = b.pressEvent;
+  b.pressEvent = false;
+  return event;
 }
 
 // ---------------- App state ----------------
@@ -212,6 +222,12 @@ void setup() {
   pinMode(PIN_BTN_B, INPUT_PULLUP);
   pinMode(PIN_BTN_C, INPUT_PULLUP);
   pinMode(PIN_TOUCH, INPUT);
+
+  // Buttons are active-low: unpressed = HIGH, pressed = LOW.
+  // Read once after pull-ups are enabled so startup state is correct.
+  btnA.lastRaw = btnA.stable = digitalRead(PIN_BTN_A);
+  btnB.lastRaw = btnB.stable = digitalRead(PIN_BTN_B);
+  btnC.lastRaw = btnC.stable = digitalRead(PIN_BTN_C);
   stamp("pins ready");
 
   // Hardware I2C is reserved for the MPU6050.
@@ -242,9 +258,19 @@ void loop() {
 
   uint32_t now = millis();
 
+  updateButton(btnA);
+  updateButton(btnB);
+  updateButton(btnC);
+
   bool a = pressed(btnA);
   bool b = pressed(btnB);
   bool c = pressed(btnC);
+
+  // Report button events so button handling can be verified over Serial.
+  if (Serial && (a || b || c)) {
+    Serial.printf("BUTTON: A=%d B=%d C=%d mode=%d menu=%d\n",
+                  a, b, c, (int)mode, menuIndex);
+  }
 
   // Every 2 seconds, try to recover the MPU if it disappeared.
   if (now - lastCheck >= 2000) {
