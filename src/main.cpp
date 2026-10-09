@@ -8,6 +8,22 @@
 U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE, PIN_SCL, PIN_SDA);
 // U8G2_SSD1306_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE, PIN_SCL, PIN_SDA);
 
+// ---------------- Boot log (printed once a serial monitor connects) ----------------
+String bootLog;
+bool bootLogPrinted = false;
+void stamp(const char *what) {
+  bootLog += String(millis());
+  bootLog += " ms  ";
+  bootLog += what;
+  bootLog += "\n";
+}
+
+bool i2cPresent(uint8_t addr) {
+  Wire.beginTransmission(addr);
+  return Wire.endTransmission() == 0;
+}
+bool oledUp = false;
+
 // ---------------- MPU6050 (raw registers, no extra library) ----------------
 struct Motion {
   float ax, ay, az;   // g
@@ -15,6 +31,7 @@ struct Motion {
   float tempC;
 } motion;
 bool mpuOk = false;
+uint8_t mpuFails = 0;
 
 void mpuInit() {
   Wire.beginTransmission(MPU_ADDR);
@@ -167,29 +184,72 @@ void drawMotion() {
 
 // ---------------- Arduino ----------------
 void setup() {
+  stamp("setup start");
   Serial.begin(115200);
   pinMode(PIN_BTN_A, INPUT_PULLUP);
   pinMode(PIN_BTN_B, INPUT_PULLUP);
   pinMode(PIN_BTN_C, INPUT_PULLUP);
   pinMode(PIN_TOUCH, INPUT);
+  stamp("pins ready");
 
-  display.begin();          // also starts Wire on SDA/SCL from the constructor
+  Wire.begin(PIN_SDA, PIN_SCL);
+  Wire.setTimeOut(20);      // don't let a flaky bus stall everything
   Wire.setClock(400000);
+  stamp("wire started");
+
+  // wait (up to 3 s) for the OLED to answer before initialising it
+  uint32_t t0 = millis();
+  while (!i2cPresent(OLED_ADDR) && millis() - t0 < 3000) delay(50);
+  oledUp = i2cPresent(OLED_ADDR);
+  stamp(oledUp ? "oled found" : "oled NOT found");
+
+  display.begin();
+  Wire.setClock(400000);
+  stamp("display.begin done");
+
   mpuInit();
+  stamp(mpuOk ? "mpu found" : "mpu NOT found");
+
   randomSeed(micros());
   nextBlinkAt = millis() + 3000;
-
-  Serial.printf("MPU6050: %s\n", mpuOk ? "ok" : "NOT FOUND");
+  stamp("setup done");
 }
 
 void loop() {
-  static uint32_t lastFrame = 0;
+  static uint32_t lastFrame = 0, lastCheck = 0, lastStatus = 0;
   static bool lastTouch = false;
   uint32_t now = millis();
 
   bool a = pressed(btnA), b = pressed(btnB), c = pressed(btnC);
 
-  if (mpuOk) mpuRead();
+  // every 2 s: bring back the OLED / MPU if they dropped off the bus
+  if (now - lastCheck >= 2000) {
+    lastCheck = now;
+    bool present = i2cPresent(OLED_ADDR);
+    if (present && !oledUp) display.begin();
+    oledUp = present;
+    if (!mpuOk) mpuInit();
+  }
+
+  if (mpuOk) {
+    if (mpuRead()) mpuFails = 0;
+    else if (++mpuFails > 10) { mpuOk = false; mpuFails = 0; }
+  }
+
+  // serial diagnostics (only when a monitor is connected, never blocks)
+  if (Serial) {
+    if (!bootLogPrinted) {
+      Serial.print("--- boot log ---\n");
+      Serial.print(bootLog);
+      bootLogPrinted = true;
+    }
+    if (now - lastStatus >= 1000) {
+      lastStatus = now;
+      Serial.printf("btnA=%d btnB=%d btnC=%d touch=%d oled=%d mpu=%d\n",
+                    digitalRead(PIN_BTN_A), digitalRead(PIN_BTN_B), digitalRead(PIN_BTN_C),
+                    digitalRead(PIN_TOUCH), oledUp, mpuOk);
+    }
+  }
 
   // touch -> happy
   bool touch = digitalRead(PIN_TOUCH) == HIGH;
@@ -210,7 +270,7 @@ void loop() {
   }
 
   // draw ~30 fps
-  if (now - lastFrame >= 33) {
+  if (oledUp && now - lastFrame >= 33) {
     lastFrame = now;
     display.clearBuffer();
     if (mode == MODE_MENU) drawMenu();

@@ -15,3 +15,4 @@
 
 // ---- I2C addresses ----
 #define MPU_ADDR 0x68
+#define OLED_ADDR 0x3C
