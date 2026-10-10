@@ -579,7 +579,7 @@ void drawOnlineClock() {
   display.drawHLine(0, 15, 128);
   display.setFont(u8g2_font_5x7_tf);
   if (strlen(WIFI_SSID) == 0) {
-    display.drawStr(0, 28, "Set Wi-Fi in src/config.h");
+    display.drawStr(0, 28, "Copy secrets.example.h to secrets.h");
     display.drawStr(0, 40, "SSID + password needed");
     display.drawStr(0, 61, "B back  Touch home");
     return;
