@@ -537,7 +537,8 @@ enum Mode {
   MODE_SNAKE,
   MODE_FLAPPY,
   MODE_TILT_MAZE,
-  MODE_DINO
+  MODE_DINO,
+  MODE_CATCH
 };
 
 Mode mode = MODE_MENU;
@@ -546,8 +547,8 @@ const char *rootItems[] = {"Pet", "Fluid", "Stats", "Motion test", "Tools", "Gam
 const int ROOT_COUNT = 7;
 const char *toolsItems[] = {"Temperature"};
 const int TOOLS_COUNT = 1;
-const char *gamesItems[] = {"Magic 8-ball", "Dice", "Snake", "Flappy", "Tilt Maze", "Dino Runner"};
-const int GAMES_COUNT = 6;
+const char *gamesItems[] = {"Magic 8-ball", "Dice", "Snake", "Flappy", "Tilt Maze", "Dino Runner", "Catch Water"};
+const int GAMES_COUNT = 7;
 const char *onlineItems[] = {"Wi-Fi clock"};
 const int ONLINE_COUNT = 1;
 
@@ -969,6 +970,124 @@ void drawMaze(uint32_t now) {
   }
 }
 
+// ---------------- Catch Water ----------------
+// A stream falls from a wandering tap. Tilt the device to slide the glass under it. After 20 s of water
+// the round ends and the share of drops that landed in the glass is shown as a percentage.
+const int CATCH_MAX = 40;
+const float CATCH_ROUND_S = 20.0f;
+const float CATCH_GLASS_W = 22.0f;     // outer width in px
+const int CATCH_GLASS_TOP = 44, CATCH_GLASS_BOT = 61;
+struct Drop { float x, y, vx, vy; bool alive; };
+Drop catchDrops[CATCH_MAX];
+float catchGlassX = 64, catchT = 0, catchSpawnAcc = 0, catchPhase = 0;
+uint16_t catchSpawned = 0, catchCaught = 0;
+bool catchStarted = false, catchDone = false;
+uint32_t catchLast = 0;
+
+float catchSpoutX() {   // wanders across the screen, never quite predictable
+  return 64.0f + 40.0f * sinf(catchT * 0.85f + catchPhase) + 14.0f * sinf(catchT * 2.1f + 1.3f * catchPhase);
+}
+
+void resetCatch() {
+  for (auto &d : catchDrops) d.alive = false;
+  catchGlassX = 64; catchT = 0; catchSpawnAcc = 0; catchSpawned = 0; catchCaught = 0;
+  catchStarted = false; catchDone = false;
+  catchPhase = random(0, 628) / 100.0f;
+  tiltBegin();
+}
+
+void catchStep(float dt) {
+  // Glass follows the tilt: neutral = centre, about 0.45 tilt = screen edge. Smoothed so it glides.
+  float target = 64.0f + constrain(tilt.tx, -0.5f, 0.5f) / 0.5f * (64.0f - CATCH_GLASS_W / 2 - 1);
+  catchGlassX += (target - catchGlassX) * 0.35f;
+
+  if (catchT < CATCH_ROUND_S) {
+    catchT += dt;
+    catchSpawnAcc += dt * 14.0f;             // 14 drops per second
+    while (catchSpawnAcc >= 1.0f) {
+      catchSpawnAcc -= 1.0f;
+      for (auto &d : catchDrops) if (!d.alive) {
+        d.alive = true; d.x = catchSpoutX() + random(-10, 11) / 10.0f; d.y = 10;
+        d.vx = random(-30, 31) / 10.0f; d.vy = 20; ++catchSpawned;
+        break;
+      }
+    }
+  }
+  bool any = false;
+  float gl = catchGlassX - CATCH_GLASS_W / 2 + 2, gr = catchGlassX + CATCH_GLASS_W / 2 - 2;   // inside the walls
+  for (auto &d : catchDrops) {
+    if (!d.alive) continue;
+    float oy = d.y;
+    d.vy += 170.0f * dt;
+    d.x += d.vx * dt; d.y += d.vy * dt;
+    if (oy < CATCH_GLASS_TOP && d.y >= CATCH_GLASS_TOP && d.x >= gl && d.x <= gr) { d.alive = false; ++catchCaught; continue; }
+    if (d.y >= 63) { d.alive = false; continue; }
+    any = true;
+  }
+  if (catchT >= CATCH_ROUND_S && !any) catchDone = true;
+}
+
+void catchTick(uint32_t now) {
+  tiltUpdate();
+  if (tilt.calibrating || catchDone || !mpuOk) { catchLast = now; return; }
+  if (!catchStarted) { catchStarted = true; catchLast = now; }
+  int steps = 0;
+  while (now - catchLast >= 20 && steps < 3) { catchStep(0.02f); catchLast += 20; ++steps; }
+  if (now - catchLast > 60) catchLast = now;
+}
+
+void drawCatch(uint32_t now) {
+  display.setFont(u8g2_font_5x7_tf);
+  if (!mpuOk) {
+    display.drawStr(0, 7, "CATCH WATER");
+    drawBanner("MPU6050 not found", 36);
+    return;
+  }
+  if (catchDone) {
+    int pct = catchSpawned ? (int)((catchCaught * 100UL + catchSpawned / 2) / catchSpawned) : 0;
+    char big[8]; snprintf(big, sizeof(big), "%d%%", pct);
+    display.setFont(u8g2_font_logisoso28_tn);
+    int w = display.getStrWidth(big);
+    display.drawStr((128 - w) / 2, 38, big);
+    display.setFont(u8g2_font_5x7_tf);
+    char line[28]; snprintf(line, sizeof(line), "caught %u of %u drops", catchCaught, catchSpawned);
+    display.drawStr((128 - display.getStrWidth(line)) / 2, 51, line);
+    display.drawStr(0, 63, "A/C again   B back");
+    return;
+  }
+  char head[24];
+  snprintf(head, sizeof(head), "CATCH  %ds", (int)ceilf(fmaxf(0.0f, CATCH_ROUND_S - catchT)));
+  display.drawStr(0, 7, head);
+
+  // Tap above the stream.
+  int sx = (int)catchSpoutX();
+  if (catchStarted && catchT < CATCH_ROUND_S) {
+    display.drawBox(sx - 3, 9, 7, 3);
+    display.drawBox(sx - 1, 12, 3, 2);
+  }
+  for (auto &d : catchDrops) if (d.alive) display.drawBox((int)d.x, (int)d.y, 1, 2);
+
+  // Glass: slightly tapered, water level rises with the share of caught drops, top edge shears with tilt.
+  int gx = (int)catchGlassX, hw = (int)(CATCH_GLASS_W / 2);
+  int lvl = catchSpawned ? (int)((CATCH_GLASS_BOT - CATCH_GLASS_TOP - 2) * catchCaught / (14.0f * CATCH_ROUND_S)) : 0;
+  lvl = constrain(lvl, 0, CATCH_GLASS_BOT - CATCH_GLASS_TOP - 2);
+  display.drawLine(gx - hw, CATCH_GLASS_TOP, gx - hw + 3, CATCH_GLASS_BOT);
+  display.drawLine(gx + hw, CATCH_GLASS_TOP, gx + hw - 3, CATCH_GLASS_BOT);
+  display.drawHLine(gx - hw + 3, CATCH_GLASS_BOT, 2 * hw - 5);
+  for (int i = 0; i < lvl; ++i) {
+    int y = CATCH_GLASS_BOT - 1 - i;
+    float f = (float)(CATCH_GLASS_BOT - y) / (CATCH_GLASS_BOT - CATCH_GLASS_TOP);
+    int inset = (int)(3 * (1.0f - f)) + 1;
+    display.drawHLine(gx - hw + inset, y, 2 * hw - 2 * inset + 1);
+  }
+
+  if (tilt.calibrating) {
+    drawBanner("Hold like a phone...", 30);
+    display.drawFrame(34, 35, 60, 5);
+    display.drawBox(35, 36, (int)(58.0f * tilt.samples / 25.0f), 3);
+  }
+}
+
 // ---------------- Fluid ----------------
 int fluidPreset = 0;
 uint32_t fluidLabelUntil = 0;
@@ -987,26 +1106,7 @@ void drawFluid(uint32_t now) {
     return;
   }
   // The gravity vector is already in screen space with the calibrated pose = straight down.
-  float gx = tilt.gx, gy = tilt.gy;
-  if (fluidPreset == fluid::PRESET_SPLASH && !tilt.calibrating) {
-    // Splash = water with momentum. Tilting flicks the liquid a bit further than the tilt itself (the change
-    // of tilt per frame is added on top), a shake or flick of the gyro stirs it up, and twisting the
-    // device in its plane swirls it. Moving the device only adds a small push (rgx - sgx).
-    static float lastGx = 0, lastGy = 1;
-    float leadX = (tilt.gx - lastGx) * 5.0f, leadY = (tilt.gy - lastGy) * 5.0f;
-    lastGx = tilt.gx; lastGy = tilt.gy;
-    gx = tilt.gx + constrain(leadX, -1.0f, 1.0f) + 0.5f * (tilt.rgx - tilt.sgx);
-    gy = tilt.gy + constrain(leadY, -1.0f, 1.0f) + 0.5f * (tilt.rgy - tilt.sgy);
-    float rate = fabsf(motion.gx) + fabsf(motion.gy) + fabsf(motion.gz);   // total rotation speed, deg/s
-    if (rate > 120.0f) fluid::agitate((int32_t)constrain((rate - 120.0f) * 0.25f, 0.0f, 60.0f));
-    float wz = motion.gz * tilt.zSign;                 // deg/s about the screen normal
-    float dw = constrain((wz - tilt.lastWz) * 1.0f, -400.0f, 400.0f);
-    tilt.lastWz = wz;
-    if (fabsf(dw) > 8.0f) fluid::spin((int32_t)dw);
-  }
-  gx *= FLUID_FLIP_X;
-  gy = (gy - 1.0f) * FLUID_FLIP_Y + 1.0f;   // flip tilt around the neutral pose (straight down)
-  fluid::step((int32_t)(gx * 256.0f), (int32_t)(gy * 256.0f));
+  fluid::step((int32_t)(tilt.gx * 256.0f), (int32_t)(tilt.gy * 256.0f));
   fluid::render(display.getBufferPtr());
 
   if (tilt.calibrating) {
@@ -1065,6 +1165,7 @@ void gameTick(uint32_t now) {
   if (mode == MODE_SNAKE) snakeTick(now);
   else if (mode == MODE_FLAPPY) flappyTick(now);
   else if (mode == MODE_TILT_MAZE) mazeTick(now);
+  else if (mode == MODE_CATCH) catchTick(now);
   else if (mode == MODE_FLUID) tiltUpdate();
   else if (mode == MODE_DINO) dinoTick(now);
 }
@@ -1228,6 +1329,7 @@ void enterMode(Mode m) {
   if (m == MODE_SNAKE) resetSnake();
   if (m == MODE_FLAPPY) resetFlappy();
   if (m == MODE_TILT_MAZE) resetMaze();
+  if (m == MODE_CATCH) resetCatch();
   if (m == MODE_FLUID) enterFluid();
   if (m == MODE_DINO) resetDino();
 }
@@ -1312,7 +1414,7 @@ void loop() {
 
   // Touch pad doubles as a Home button outside Pet mode.
   // (Not in Tilt Maze / Fluid: your grip on the back of the device would keep sending you home.)
-  if (touchDown && mode != MODE_PET && mode != MODE_MENU && mode != MODE_FLUID && mode != MODE_TILT_MAZE) {
+  if (touchDown && mode != MODE_PET && mode != MODE_MENU && mode != MODE_FLUID && mode != MODE_TILT_MAZE && mode != MODE_CATCH) {
     menuIndex = 0;
     enterMode(MODE_MENU);
   }
@@ -1458,7 +1560,8 @@ void loop() {
       else if (submenuIndex == 2) enterMode(MODE_SNAKE);
       else if (submenuIndex == 3) enterMode(MODE_FLAPPY);
       else if (submenuIndex == 4) enterMode(MODE_TILT_MAZE);
-      else enterMode(MODE_DINO);
+      else if (submenuIndex == 5) enterMode(MODE_DINO);
+      else enterMode(MODE_CATCH);
     }
   } else if (mode == MODE_ONLINE) {
     if (b) enterMode(MODE_MENU);
@@ -1489,6 +1592,10 @@ void loop() {
       if (gameOver) resetFlappy();
       else birdV = -2.4f;
     }
+  } else if (mode == MODE_CATCH) {
+    if (b) enterMode(MODE_GAMES);
+    else if (catchDone && (a || c)) resetCatch();
+    else if (a) tiltBegin();
   } else if (mode == MODE_TILT_MAZE) {
     if (b) enterMode(MODE_GAMES);
     else if (c || (a && mazeWon)) resetMaze();          // new maze
@@ -1544,6 +1651,8 @@ void loop() {
       drawFlappy();
     } else if (mode == MODE_FLUID) {
       drawFluid(now);
+    } else if (mode == MODE_CATCH) {
+      drawCatch(now);
     } else if (mode == MODE_TILT_MAZE) {
       drawMaze(now);
     } else {

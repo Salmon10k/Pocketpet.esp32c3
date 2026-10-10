@@ -54,7 +54,6 @@ static const PresetParams PRESETS[PRESET_COUNT] = {
   {"WATER",      FLUID_W_RHO0, FLUID_W_K, FLUID_W_KN, FLUID_W_COH, FLUID_W_VISC, FLUID_W_DAMP, 256},
   {"HONEY",      380,  70,  90,   120,     90,  244,  90},    // thick and slow: weak pull, heavy damping
   {"MERCURY",    380,  80,  90,   170,     2,   255,  320},   // heavy and fast, beads up, hardly any drag
-  {"SPLASH",     380,  70,  90,   40,      4,   255,  256},   // light and bouncy; main.cpp feeds it motion
 };
 
 static int curPreset = 0;
@@ -257,26 +256,6 @@ void step(int32_t gx_q8, int32_t gy_q8) {
   int32_t gx = rz(rz(gx_q8 * GRAV_STEP_Q8, 8) * gs, 8);
   int32_t gy = rz(rz(gy_q8 * GRAV_STEP_Q8, 8) * gs, 8);
   for (int s = 0; s < SUBSTEPS; ++s) substep(gx, gy);
-}
-
-// Rotation kick: the container turned, the liquid lags behind and swirls the other way.
-// dw_q8 = change of angular speed this frame (+ = clockwise on screen), Q8, about 256 = a strong twist.
-void spin(int32_t dw_q8) {
-  const int32_t cx = (W * 256) / 2, cy = (H * 256) / 2;
-  for (int i = 0; i < N; ++i) {
-    int32_t rx = px_[i] - cx, ry = py_[i] - cy;
-    vx_[i] = clampi(vx_[i] + rz(-ry * dw_q8, 12), -MAX_SPEED, MAX_SPEED);
-    vy_[i] = clampi(vy_[i] + rz(rx * dw_q8, 12), -MAX_SPEED, MAX_SPEED);
-  }
-}
-
-// Turbulence kick: random velocity on every particle. Sign-free, used when the gyro says the device is shaken.
-void agitate(int32_t amt_q8) {
-  if (amt_q8 <= 0) return;
-  for (int i = 0; i < N; ++i) {
-    vx_[i] = clampi(vx_[i] + (int32_t)(rnd() % (uint32_t)(2 * amt_q8 + 1)) - amt_q8, -MAX_SPEED, MAX_SPEED);
-    vy_[i] = clampi(vy_[i] + (int32_t)(rnd() % (uint32_t)(2 * amt_q8 + 1)) - amt_q8, -MAX_SPEED, MAX_SPEED);
-  }
 }
 
 // ---------------- Rendering ----------------

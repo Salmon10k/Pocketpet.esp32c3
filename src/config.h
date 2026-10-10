@@ -33,6 +33,3 @@
 // If the eyes look the wrong way when you tilt the keychain, flip these (1 or -1).
 #define TILT_X_SIGN  1
 #define TILT_Y_SIGN  1
-// Fluid mode: set to -1 if the liquid runs the wrong way when you tilt (all presets).
-#define FLUID_FLIP_X 1
-#define FLUID_FLIP_Y 1
