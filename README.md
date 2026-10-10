@@ -34,7 +34,7 @@ The physical wiring did not change when the I2C roles were swapped. Only the dri
 ## Current firmware
 
 ### Menu
-Pet, Stats, Motion test, Tools, Games, Online. Tools contains Temperature. Games contains Magic 8-ball, Dice, Snake, Flappy, Tilt Maze, and Dino Runner. Online is a placeholder for future WiFi features. Outside Pet mode, touching the pad returns to the main menu.
+Pet, Stats, Motion test, Tools, Games, Online. Tools contains Temperature. Games contains Magic 8-ball, Dice, Snake, Flappy, procedurally generated Tilt Maze maps, and an upgraded Dino Runner with jumping, crouching, cactus clusters and flying birds. Online is a Wi-Fi NTP clock (configure `WIFI_SSID` and `WIFI_PASSWORD` in `src/config.h` first). It displays local Pakistan time after syncing. Wi-Fi stays off until you enter Online. Outside Pet mode, touching the pad returns to the main menu.
 
 ### Pet mode (companion style, nothing can die)
 - Eyes ease smoothly between moods, blink on their own, sometimes double-blink or wink, and wander around when idle.
@@ -87,8 +87,8 @@ When changing wiring, update `src/config.h` first.
 - [x] Verify current firmware on hardware
 - [ ] Try the RoboEyes library for the eyes (optional, only if the current look is not liked)
 - [x] Temperature mode
-- [x] Game mode (Magic 8-ball + Dice)\n- [x] Mini-games (Snake, Flappy, Tilt Maze, Dino Runner)\n- [x] Touch pad as Home control outside Pet mode
-- [ ] WiFi features (NTP clock, sleep at night)
+- [x] Game mode (Magic 8-ball + Dice)\n- [x] Mini-games (Snake, Flappy, generated Tilt Maze, Dino Runner with jump/crouch and varied obstacles)\n- [x] Touch pad as Home control outside Pet mode\n- [x] Optional Wi-Fi NTP clock (credentials must be configured locally)
+- [x] Wi-Fi NTP clock\n- [ ] Pet sleeps at night
 - [ ] Battery monitoring (GPIO3 divider)
 - [ ] Deep sleep / wake on touch
 
