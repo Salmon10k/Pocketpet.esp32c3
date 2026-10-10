@@ -744,7 +744,7 @@ void drawMenuList(const char *title, const char *items[], int count, int selecte
   }
 
   display.setFont(u8g2_font_5x7_tf);
-  display.drawStr(0, 63, "A up  B ok/back  C down");
+  display.drawStr(0, 63, "A up B ok C dn Touch=Home");
 }
 
 void drawMenu() {
