@@ -197,6 +197,37 @@ void saveStats(bool force) {
 uint32_t lastActivity = 0;      // any touch, button or motion
 uint32_t lastInteraction = 0;   // touch or button only
 
+// ---------------- Settings (saved to flash) ----------------
+const uint8_t BRIGHT_LEVELS[] = {8, 60, 150, 255};
+const char *BRIGHT_NAMES[] = {"Low", "Medium", "High", "Max"};
+const uint32_t SLEEP_MS[] = {0, 30000, 60000, 300000};
+const char *SLEEP_NAMES[] = {"Off", "30 s", "1 min", "5 min"};
+uint8_t setBright = 2, setSleep = 0, setFlip = 0;
+bool screenOff = false;
+
+void applyScreen() {
+  display.setContrast(BRIGHT_LEVELS[setBright]);
+  display.setFlipMode(setFlip ? 1 : 0);
+}
+
+void loadSettings() {
+  setBright = constrain(prefs.getUChar("bright", 2), 0, 3);
+  setSleep = constrain(prefs.getUChar("sleep", 0), 0, 3);
+  setFlip = prefs.getUChar("flip", 0) ? 1 : 0;
+}
+
+void saveSettings() {
+  prefs.putUChar("bright", setBright);
+  prefs.putUChar("sleep", setSleep);
+  prefs.putUChar("flip", setFlip);
+}
+
+void resetPet() {
+  pet.happy = 60; pet.energy = 80; pet.pets = 0;
+  prefs.putUChar("happy", 60); prefs.putUChar("energy", 80); prefs.putUInt("pets", 0);
+  savedHappy = 60; savedEnergy = 80; savedPets = 0;
+}
+
 void addHappy(float v) { pet.happy = constrain(pet.happy + v, 0.0f, 100.0f); }
 
 // Called once per second.
@@ -531,6 +562,7 @@ enum Mode {
   MODE_TOOLS,
   MODE_GAMES,
   MODE_ONLINE,
+  MODE_SETTINGS,
   MODE_TEMP,
   MODE_8BALL,
   MODE_DICE,
@@ -543,8 +575,8 @@ enum Mode {
 
 Mode mode = MODE_MENU;
 
-const char *rootItems[] = {"Pet", "Fluid", "Stats", "Motion test", "Tools", "Games", "Online"};
-const int ROOT_COUNT = 7;
+const char *rootItems[] = {"Pet", "Fluid", "Stats", "Motion test", "Tools", "Games", "Online", "Settings"};
+const int ROOT_COUNT = 8;
 const char *toolsItems[] = {"Temperature"};
 const int TOOLS_COUNT = 1;
 const char *gamesItems[] = {"Magic 8-ball", "Dice", "Snake", "Flappy", "Tilt Maze", "Dino Runner", "Catch Water"};
@@ -1232,6 +1264,35 @@ void drawStats() {
   display.drawStr(0, 60, line);
 }
 
+int settingsRow = 0;
+bool resetArmed = false;
+uint32_t settingsMsgUntil = 0;
+const int SETTINGS_ROWS = 5;   // brightness, auto-off, flip, reset pet, back
+
+void drawSettings(uint32_t now) {
+  display.setFont(u8g2_font_7x13B_tf);
+  display.drawStr(0, 12, "SETTINGS");
+  display.drawHLine(0, 15, 128);
+  display.setFont(u8g2_font_6x10_tf);
+
+  const char *labels[SETTINGS_ROWS] = {"Brightness", "Screen off", "Flip screen", "Reset pet", "Back"};
+  const char *vals[SETTINGS_ROWS] = {BRIGHT_NAMES[setBright], SLEEP_NAMES[setSleep], setFlip ? "On" : "Off",
+                                     resetArmed ? "Sure? B=yes" : "", ""};
+  const int visible = 4;
+  int first = settingsRow - visible + 1;
+  if (first < 0) first = 0;
+  for (int row = 0; row < visible && first + row < SETTINGS_ROWS; ++row) {
+    int i = first + row, y = 27 + row * 11;
+    if (i == settingsRow) display.drawStr(0, y, ">");
+    display.drawStr(8, y, labels[i]);
+    int w = display.getStrWidth(vals[i]);
+    display.drawStr(128 - w, y, vals[i]);
+  }
+  display.setFont(u8g2_font_5x7_tf);
+  display.drawStr(0, 63, "A up  B change  C down");
+  if (now < settingsMsgUntil) drawBanner("Pet reset", 40);
+}
+
 void drawMotion() {
   char line[32];
   display.setFont(u8g2_font_6x10_tf);
@@ -1324,6 +1385,7 @@ void enterMode(Mode m) {
     overlay = OV_NONE;
   }
   if (m == MODE_ONLINE) startOnlineClock();
+  if (m == MODE_SETTINGS) { settingsRow = 0; resetArmed = false; }
   if (m == MODE_8BALL) eightBallIndex = random(EIGHT_BALL_COUNT);
   if (m == MODE_DICE) diceValue = random(1, 7);
   if (m == MODE_SNAKE) resetSnake();
@@ -1371,6 +1433,8 @@ void setup() {
   stamp(mpuOk ? "mpu found (software I2C)" : "mpu NOT found");
 
   loadStats();
+  loadSettings();
+  if (oledUp) applyScreen();
   stamp("stats loaded");
 
   randomSeed(micros());
@@ -1410,6 +1474,19 @@ void loop() {
     Serial.printf("BUTTON: A=%d B=%d C=%d mode=%d menu=%d\n",
                   a, b, c, (int)mode, menuIndex);
   }
+  // Screen auto-off: any button / touch / movement wakes it, and that first press is not passed on.
+  if (screenOff) {
+    if (a || b || c || touchDown || now - lastActivity < 300) {
+      screenOff = false;
+      display.setPowerSave(0);
+      a = b = c = touchDown = false;
+      lastInteraction = lastActivity = now;
+    }
+  } else if (setSleep && oledUp && SLEEP_MS[setSleep] && now - lastActivity > SLEEP_MS[setSleep] &&
+             mode != MODE_FLUID && mode != MODE_TILT_MAZE && mode != MODE_CATCH) {
+    screenOff = true;
+    display.setPowerSave(1);
+  }
   if (a || b || c || touchDown) lastInteraction = lastActivity = now;
 
   // Touch pad doubles as a Home button outside Pet mode.
@@ -1434,6 +1511,8 @@ void loop() {
     bool present = oledPresent();
     if (present && !oledUp) {
       display.begin();
+      applyScreen();
+      screenOff = false;
       oledUp = true;
     } else if (!present) {
       oledUp = false;
@@ -1540,9 +1619,11 @@ void loop() {
       } else if (menuIndex == 5) {
         submenuIndex = 0;
         enterMode(MODE_GAMES);
-      } else {
+      } else if (menuIndex == 6) {
         submenuIndex = 0;
         enterMode(MODE_ONLINE);
+      } else {
+        enterMode(MODE_SETTINGS);
       }
     }
   } else if (mode == MODE_TOOLS) {
@@ -1562,6 +1643,18 @@ void loop() {
       else if (submenuIndex == 4) enterMode(MODE_TILT_MAZE);
       else if (submenuIndex == 5) enterMode(MODE_DINO);
       else enterMode(MODE_CATCH);
+    }
+  } else if (mode == MODE_SETTINGS) {
+    if (a) { settingsRow = (settingsRow + SETTINGS_ROWS - 1) % SETTINGS_ROWS; resetArmed = false; }
+    if (c) { settingsRow = (settingsRow + 1) % SETTINGS_ROWS; resetArmed = false; }
+    if (b) {
+      if (settingsRow == 0) { setBright = (setBright + 1) % 4; applyScreen(); saveSettings(); }
+      else if (settingsRow == 1) { setSleep = (setSleep + 1) % 4; saveSettings(); }
+      else if (settingsRow == 2) { setFlip ^= 1; applyScreen(); saveSettings(); }
+      else if (settingsRow == 3) {
+        if (resetArmed) { resetPet(); resetArmed = false; settingsMsgUntil = millis() + 1500; }
+        else resetArmed = true;
+      } else enterMode(MODE_MENU);
     }
   } else if (mode == MODE_ONLINE) {
     if (b) enterMode(MODE_MENU);
@@ -1620,7 +1713,7 @@ void loop() {
   }
 
   // Draw.
-  if (oledUp && now - lastFrame >= FRAME_MS) {
+  if (oledUp && !screenOff && now - lastFrame >= FRAME_MS) {
     lastFrame = now;
 
     display.clearBuffer();
@@ -1637,6 +1730,8 @@ void loop() {
       drawToolsMenu();
     } else if (mode == MODE_GAMES) {
       drawGamesMenu();
+    } else if (mode == MODE_SETTINGS) {
+      drawSettings(now);
     } else if (mode == MODE_ONLINE) {
       drawOnlineClock();
     } else if (mode == MODE_TEMP) {

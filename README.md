@@ -34,7 +34,7 @@ The physical wiring did not change when the I2C roles were swapped. Only the dri
 ## Current firmware
 
 ### Menu
-Pet, Fluid, Stats, Motion test, Tools, Games, Online. Tools contains Temperature. Games contains Magic 8-ball, Dice, Snake, Flappy, procedurally generated Tilt Maze maps, and an upgraded Dino Runner with jumping, crouching, cactus clusters and flying birds. Online is a Wi-Fi NTP clock (copy `src/secrets.example.h` to `src/secrets.h` and set `WIFI_SSID` / `WIFI_PASSWORD` locally first). It displays local Pakistan time after syncing. Wi-Fi stays off until you enter Online. Outside Pet mode, touching the pad returns to the main menu.
+Pet, Fluid, Stats, Motion test, Tools, Games, Online, Settings (brightness, screen auto-off, flip screen, reset pet). Tools contains Temperature. Games contains Magic 8-ball, Dice, Snake, Flappy, procedurally generated Tilt Maze maps, and an upgraded Dino Runner with jumping, crouching, cactus clusters and flying birds. Online is a Wi-Fi NTP clock (copy `src/secrets.example.h` to `src/secrets.h` and set `WIFI_SSID` / `WIFI_PASSWORD` locally first). It displays local Pakistan time after syncing. Wi-Fi stays off until you enter Online. Outside Pet mode, touching the pad returns to the main menu.
 
 ### Fluid mode
 Particle water simulation that follows tilt. Hold the device like a phone, it calibrates for half a second (that pose counts as level). A = re-zero, C = Water / Honey / Mercury, B = back.
