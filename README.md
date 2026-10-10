@@ -34,7 +34,7 @@ The physical wiring did not change when the I2C roles were swapped. Only the dri
 ## Current firmware
 
 ### Menu
-Pet, Stats, Motion test, Tools, Games, Online. Tools currently contains Temperature. Games contains Magic 8-ball and Dice. Online is a placeholder for the future WiFi features.
+Pet, Stats, Motion test, Tools, Games, Online. Tools contains Temperature. Games contains Magic 8-ball, Dice, Snake, Flappy, Tilt Maze, and Dino Runner. Online is a placeholder for future WiFi features. Outside Pet mode, touching the pad returns to the main menu.
 
 ### Pet mode (companion style, nothing can die)
 - Eyes ease smoothly between moods, blink on their own, sometimes double-blink or wink, and wander around when idle.
@@ -87,7 +87,7 @@ When changing wiring, update `src/config.h` first.
 - [x] Verify current firmware on hardware
 - [ ] Try the RoboEyes library for the eyes (optional, only if the current look is not liked)
 - [x] Temperature mode
-- [x] Game mode (Magic 8-ball + Dice)
+- [x] Game mode (Magic 8-ball + Dice)\n- [x] Mini-games (Snake, Flappy, Tilt Maze, Dino Runner)\n- [x] Touch pad as Home control outside Pet mode
 - [ ] WiFi features (NTP clock, sleep at night)
 - [ ] Battery monitoring (GPIO3 divider)
 - [ ] Deep sleep / wake on touch
