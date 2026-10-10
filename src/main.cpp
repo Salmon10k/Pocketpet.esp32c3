@@ -778,32 +778,6 @@ void drawMaze() {
   display.drawDisc((int)mazeX, (int)mazeY, 2);
   if (mazeWon) { display.drawBox(35, 27, 58, 15); display.setDrawColor(0); display.drawStr(43, 37, "MAZE CLEAR"); display.setDrawColor(1); }
 }
-float mazeX = 12, mazeY = 22;
-bool mazeWon = false;
-void resetMaze() { mazeX = 12; mazeY = 22; mazeWon = false; }
-void mazeTick() {
-  if (mazeWon) return;
-  float nx = mazeX + constrain(motion.ay * 2.4f, -2.0f, 2.0f);
-  float ny = mazeY + constrain(motion.ax * 2.4f, -2.0f, 2.0f);
-  // Outer boundary and two simple interior walls with gaps.
-  nx = constrain(nx, 5.0f, 122.0f); ny = constrain(ny, 18.0f, 58.0f);
-  if (nx > 36 && nx < 42 && ny < 48) nx = mazeX;
-  if (ny > 34 && ny < 40 && nx > 48 && nx < 102) ny = mazeY;
-  if (nx > 78 && nx < 84 && ny > 27) nx = mazeX;
-  mazeX = nx; mazeY = ny;
-  if (mazeX > 112 && mazeY < 29) mazeWon = true;
-}
-void drawMaze() {
-  display.setFont(u8g2_font_5x7_tf); display.drawStr(0, 7, "TILT MAZE");
-  display.drawFrame(1, 12, 126, 50);
-  display.drawBox(38, 12, 4, 28);
-  display.drawBox(48, 34, 54, 4);
-  display.drawBox(80, 38, 4, 24);
-  display.drawFrame(108, 15, 13, 13);
-  display.drawDisc((int)mazeX, (int)mazeY, 3);
-  if (mazeWon) display.drawStr(45, 60, "GOAL!");
-}
-
 // Dino Runner: jump, crouch, mixed cactus clusters and low-flying birds.
 float dinoY = 49, dinoV = 0;
 int cactusX = 120, cactusH = 12, dinoObstacleType = 0;
@@ -849,45 +823,6 @@ void drawDino() {
   }
   if (gameOver) { display.drawBox(27, 24, 74, 20); display.setDrawColor(0); display.drawStr(37, 36, "GAME OVER"); display.setDrawColor(1); display.setFont(u8g2_font_5x7_tf); display.drawStr(8, 63, "A jump  C duck  B back"); }
 }
-float dinoY = 49, dinoV = 0;
-int cactusX = 120, cactusH = 12;
-uint32_t dinoLastTick = 0;
-void resetDino() {
-  dinoY = 49; dinoV = 0; cactusX = 120; cactusH = random(9, 17);
-  gameOver = false; gameScore = 0; dinoLastTick = millis();
-}
-void dinoTick(uint32_t now) {
-  if (gameOver || now - dinoLastTick < 35) return;
-  dinoLastTick = now;
-  dinoV += 0.22f; dinoY += dinoV;
-  if (dinoY > 49) { dinoY = 49; dinoV = 0; }
-  int speed = 2 + min(3, (int)(gameScore / 12));
-  cactusX -= speed;
-  if (cactusX < -5) { cactusX = 128 + random(15, 45); cactusH = random(9, 17); gameScore++; }
-  if (cactusX < 27 && cactusX > 8 && dinoY > 49 - cactusH + 5) gameOver = true;
-}
-void drawDino() {
-  char score[16]; snprintf(score, sizeof(score), "DINO %lu", (unsigned long)gameScore);
-  display.setFont(u8g2_font_5x7_tf); display.drawStr(0, 7, score);
-  display.drawHLine(0, 55, 128);
-  int y = (int)dinoY;
-  // Tiny pixel T-Rex silhouette.
-  display.drawBox(12, y - 10, 10, 8);
-  display.drawBox(18, y - 14, 5, 6);
-  display.drawPixel(21, y - 12);
-  display.drawBox(9, y - 5, 5, 3);
-  display.drawBox(14, y - 2, 3, 2);
-  display.drawBox(20, y - 2, 3, 2);
-  display.drawBox(cactusX, 55 - cactusH, 4, cactusH);
-  display.drawBox(cactusX - 3, 47 - cactusH / 2, 3, 4);
-  display.drawBox(cactusX + 3, 43 - cactusH / 2, 3, 4);
-  if (gameOver) {
-    display.drawBox(27, 25, 74, 18);
-    display.setDrawColor(0); display.drawStr(37, 37, "GAME OVER"); display.setDrawColor(1);
-    display.drawStr(18, 63, "A/C restart  B back");
-  }
-}
-
 void gameTick(uint32_t now) {
   if (mode == MODE_SNAKE) snakeTick(now);
   else if (mode == MODE_FLAPPY) flappyTick(now);
