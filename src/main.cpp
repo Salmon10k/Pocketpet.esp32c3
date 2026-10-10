@@ -523,7 +523,11 @@ enum Mode {
   MODE_ONLINE,
   MODE_TEMP,
   MODE_8BALL,
-  MODE_DICE
+  MODE_DICE,
+  MODE_SNAKE,
+  MODE_FLAPPY,
+  MODE_TILT_MAZE,
+  MODE_DINO
 };
 
 Mode mode = MODE_MENU;
@@ -532,8 +536,8 @@ const char *rootItems[] = {"Pet", "Stats", "Motion test", "Tools", "Games", "Onl
 const int ROOT_COUNT = 6;
 const char *toolsItems[] = {"Temperature"};
 const int TOOLS_COUNT = 1;
-const char *gamesItems[] = {"Magic 8-ball", "Dice"};
-const int GAMES_COUNT = 2;
+const char *gamesItems[] = {"Magic 8-ball", "Dice", "Snake", "Flappy", "Tilt Maze", "Dino Runner"};
+const int GAMES_COUNT = 6;
 const char *onlineItems[] = {"Coming soon"};
 const int ONLINE_COUNT = 1;
 
@@ -547,6 +551,177 @@ const char *eightBallAnswers[] = {
 const int EIGHT_BALL_COUNT = 8;
 int eightBallIndex = 0;
 int diceValue = 1;
+
+// ---------------- Mini-game state ----------------
+// All games are original, compact monochrome adaptations for the 128x64 OLED.
+// A/C are game actions; B returns to Games. Touch always returns Home outside Pet.
+uint32_t gameLastTick = 0;
+bool gameOver = false;
+uint32_t gameScore = 0;
+
+// Snake: 8px grid, 16x6 cells.
+int snakeX[96], snakeY[96];
+int snakeLength = 4, snakeDir = 0, foodX = 10, foodY = 3;
+uint32_t snakeLastStep = 0;
+
+void resetSnake() {
+  snakeLength = 4; snakeDir = 0; gameOver = false; gameScore = 0;
+  for (int i = 0; i < snakeLength; ++i) {
+    snakeX[i] = 6 - i; snakeY[i] = 3;
+  }
+  foodX = random(0, 16); foodY = random(0, 6);
+  snakeLastStep = millis();
+}
+
+void snakeTick(uint32_t now) {
+  if (gameOver || now - snakeLastStep < 170) return;
+  snakeLastStep = now;
+  int nx = snakeX[0], ny = snakeY[0];
+  if (snakeDir == 0) nx++;
+  else if (snakeDir == 1) ny++;
+  else if (snakeDir == 2) nx--;
+  else ny--;
+  if (nx < 0 || nx >= 16 || ny < 0 || ny >= 6) { gameOver = true; return; }
+  bool eating = nx == foodX && ny == foodY;
+  int limit = snakeLength - (eating ? 0 : 1);
+  for (int i = 0; i < limit; ++i) {
+    if (snakeX[i] == nx && snakeY[i] == ny) { gameOver = true; return; }
+  }
+  if (eating && snakeLength < 96) {
+    snakeLength++;
+    gameScore++;
+    foodX = random(0, 16); foodY = random(0, 6);
+  }
+  for (int i = snakeLength - 1; i > 0; --i) {
+    snakeX[i] = snakeX[i - 1]; snakeY[i] = snakeY[i - 1];
+  }
+  snakeX[0] = nx; snakeY[0] = ny;
+}
+
+void drawSnake() {
+  display.setFont(u8g2_font_5x7_tf);
+  char score[16]; snprintf(score, sizeof(score), "SNAKE %lu", (unsigned long)gameScore);
+  display.drawStr(0, 7, score);
+  display.drawHLine(0, 10, 128);
+  display.drawDisc(foodX * 8 + 4, 16 + foodY * 8 + 4, 3);
+  for (int i = 0; i < snakeLength; ++i) {
+    if (i == 0) display.drawBox(snakeX[i] * 8 + 1, 17 + snakeY[i] * 8, 6, 6);
+    else display.drawFrame(snakeX[i] * 8 + 1, 17 + snakeY[i] * 8, 6, 6);
+  }
+  if (gameOver) {
+    display.drawBox(24, 25, 80, 18);
+    display.setDrawColor(0); display.drawStr(34, 37, "GAME OVER"); display.setDrawColor(1);
+    display.setFont(u8g2_font_5x7_tf); display.drawStr(18, 61, "A/C restart  B back");
+  }
+}
+
+// Flappy: tap A or C to flap; pipes scroll automatically.
+float birdY = 34, birdV = 0;
+int pipeX = 112, pipeGapY = 34;
+uint32_t flappyLastTick = 0;
+
+void resetFlappy() {
+  birdY = 34; birdV = 0; pipeX = 112; pipeGapY = random(27, 48);
+  gameOver = false; gameScore = 0; flappyLastTick = millis();
+}
+void flappyTick(uint32_t now) {
+  if (gameOver || now - flappyLastTick < 35) return;
+  flappyLastTick = now;
+  birdV += 0.16f; birdY += birdV;
+  pipeX -= 2 + (int)(gameScore / 8);
+  if (pipeX < -8) { pipeX = 128; pipeGapY = random(25, 48); gameScore++; }
+  if (birdY < 13 || birdY > 57) gameOver = true;
+  if (pipeX < 34 && pipeX + 8 > 22 &&
+      (birdY < pipeGapY - 10 || birdY > pipeGapY + 10)) gameOver = true;
+}
+void drawFlappy() {
+  char score[16]; snprintf(score, sizeof(score), "FLAPPY %lu", (unsigned long)gameScore);
+  display.setFont(u8g2_font_5x7_tf); display.drawStr(0, 7, score);
+  display.drawHLine(0, 60, 128);
+  display.drawBox(pipeX, 12, 8, max(0, pipeGapY - 10 - 12));
+  display.drawBox(pipeX, pipeGapY + 10, 8, max(0, 60 - (pipeGapY + 10)));
+  display.drawDisc(27, (int)birdY, 4);
+  display.drawPixel(29, (int)birdY - 1);
+  if (gameOver) {
+    display.drawBox(24, 25, 80, 18);
+    display.setDrawColor(0); display.drawStr(34, 37, "GAME OVER"); display.setDrawColor(1);
+    display.drawStr(18, 61, "A/C restart  B back");
+  }
+}
+
+// Tilt Maze: tilt the board to guide the ball through a simple maze.
+float mazeX = 12, mazeY = 22;
+bool mazeWon = false;
+void resetMaze() { mazeX = 12; mazeY = 22; mazeWon = false; }
+void mazeTick() {
+  if (mazeWon) return;
+  float nx = mazeX + constrain(motion.ay * 2.4f, -2.0f, 2.0f);
+  float ny = mazeY + constrain(motion.ax * 2.4f, -2.0f, 2.0f);
+  // Outer boundary and two simple interior walls with gaps.
+  nx = constrain(nx, 5.0f, 122.0f); ny = constrain(ny, 18.0f, 58.0f);
+  if (nx > 36 && nx < 42 && ny < 48) nx = mazeX;
+  if (ny > 34 && ny < 40 && nx > 48 && nx < 102) ny = mazeY;
+  if (nx > 78 && nx < 84 && ny > 27) nx = mazeX;
+  mazeX = nx; mazeY = ny;
+  if (mazeX > 112 && mazeY < 29) mazeWon = true;
+}
+void drawMaze() {
+  display.setFont(u8g2_font_5x7_tf); display.drawStr(0, 7, "TILT MAZE");
+  display.drawFrame(1, 12, 126, 50);
+  display.drawBox(38, 12, 4, 28);
+  display.drawBox(48, 34, 54, 4);
+  display.drawBox(80, 38, 4, 24);
+  display.drawFrame(108, 15, 13, 13);
+  display.drawDisc((int)mazeX, (int)mazeY, 3);
+  if (mazeWon) display.drawStr(45, 60, "GOAL!");
+}
+
+// Dino Runner: a compact, offline endless-runner with jump physics and cacti.
+float dinoY = 49, dinoV = 0;
+int cactusX = 120, cactusH = 12;
+uint32_t dinoLastTick = 0;
+void resetDino() {
+  dinoY = 49; dinoV = 0; cactusX = 120; cactusH = random(9, 17);
+  gameOver = false; gameScore = 0; dinoLastTick = millis();
+}
+void dinoTick(uint32_t now) {
+  if (gameOver || now - dinoLastTick < 35) return;
+  dinoLastTick = now;
+  dinoV += 0.22f; dinoY += dinoV;
+  if (dinoY > 49) { dinoY = 49; dinoV = 0; }
+  int speed = 2 + min(3, (int)(gameScore / 12));
+  cactusX -= speed;
+  if (cactusX < -5) { cactusX = 128 + random(15, 45); cactusH = random(9, 17); gameScore++; }
+  if (cactusX < 27 && cactusX > 8 && dinoY > 49 - cactusH + 5) gameOver = true;
+}
+void drawDino() {
+  char score[16]; snprintf(score, sizeof(score), "DINO %lu", (unsigned long)gameScore);
+  display.setFont(u8g2_font_5x7_tf); display.drawStr(0, 7, score);
+  display.drawHLine(0, 55, 128);
+  int y = (int)dinoY;
+  // Tiny pixel T-Rex silhouette.
+  display.drawBox(12, y - 10, 10, 8);
+  display.drawBox(18, y - 14, 5, 6);
+  display.drawPixel(21, y - 12);
+  display.drawBox(9, y - 5, 5, 3);
+  display.drawBox(14, y - 2, 3, 2);
+  display.drawBox(20, y - 2, 3, 2);
+  display.drawBox(cactusX, 55 - cactusH, 4, cactusH);
+  display.drawBox(cactusX - 3, 47 - cactusH / 2, 3, 4);
+  display.drawBox(cactusX + 3, 43 - cactusH / 2, 3, 4);
+  if (gameOver) {
+    display.drawBox(27, 25, 74, 18);
+    display.setDrawColor(0); display.drawStr(37, 37, "GAME OVER"); display.setDrawColor(1);
+    display.drawStr(18, 63, "A/C restart  B back");
+  }
+}
+
+void gameTick(uint32_t now) {
+  if (mode == MODE_SNAKE) snakeTick(now);
+  else if (mode == MODE_FLAPPY) flappyTick(now);
+  else if (mode == MODE_TILT_MAZE) mazeTick();
+  else if (mode == MODE_DINO) dinoTick(now);
+}
 
 void drawMenuList(const char *title, const char *items[], int count, int selected) {
   display.setFont(u8g2_font_7x13B_tf);
@@ -703,6 +878,10 @@ void enterMode(Mode m) {
   }
   if (m == MODE_8BALL) eightBallIndex = random(EIGHT_BALL_COUNT);
   if (m == MODE_DICE) diceValue = random(1, 7);
+  if (m == MODE_SNAKE) resetSnake();
+  if (m == MODE_FLAPPY) resetFlappy();
+  if (m == MODE_TILT_MAZE) resetMaze();
+  if (m == MODE_DINO) resetDino();
 }
 
 // ---------------- Arduino ----------------
@@ -782,6 +961,14 @@ void loop() {
                   a, b, c, (int)mode, menuIndex);
   }
   if (a || b || c || touchDown) lastInteraction = lastActivity = now;
+
+  // Touch pad doubles as a Home button outside Pet mode.
+  if (touchDown && mode != MODE_PET && mode != MODE_MENU) {
+    menuIndex = 0;
+    enterMode(MODE_MENU);
+  }
+
+  gameTick(now);
 
   // Every 2 seconds: recover the MPU and the OLED if either one dropped out.
   if (now - lastCheck >= 2000) {
@@ -916,7 +1103,11 @@ void loop() {
     if (c) submenuIndex = (submenuIndex + 1) % GAMES_COUNT;
     if (b) {
       if (submenuIndex == 0) enterMode(MODE_8BALL);
-      else enterMode(MODE_DICE);
+      else if (submenuIndex == 1) enterMode(MODE_DICE);
+      else if (submenuIndex == 2) enterMode(MODE_SNAKE);
+      else if (submenuIndex == 3) enterMode(MODE_FLAPPY);
+      else if (submenuIndex == 4) enterMode(MODE_TILT_MAZE);
+      else enterMode(MODE_DINO);
     }
   } else if (mode == MODE_ONLINE) {
     if (b) enterMode(MODE_MENU);
@@ -936,6 +1127,26 @@ void loop() {
   } else if (mode == MODE_DICE) {
     if (a || c) diceValue = random(1, 7);
     if (b) enterMode(MODE_GAMES);
+  } else if (mode == MODE_SNAKE) {
+    if (a) snakeDir = (snakeDir + 3) % 4;
+    if (c) snakeDir = (snakeDir + 1) % 4;
+    if (b) enterMode(MODE_GAMES);
+    if (gameOver && (a || c)) resetSnake();
+  } else if (mode == MODE_FLAPPY) {
+    if (b) enterMode(MODE_GAMES);
+    else if (a || c) {
+      if (gameOver) resetFlappy();
+      else birdV = -2.4f;
+    }
+  } else if (mode == MODE_TILT_MAZE) {
+    if (b) enterMode(MODE_GAMES);
+  } else if (mode == MODE_DINO) {
+    if (b) enterMode(MODE_GAMES);
+    else if (a || c) {
+      if (gameOver) resetDino();
+      else if (dinoY >= 48.5f) dinoV = -3.4f;
+      else if (c) dinoV += 0.9f;
+    }
   } else if (b) {
     enterMode(MODE_MENU);
   }
@@ -964,8 +1175,16 @@ void loop() {
       drawTemperature();
     } else if (mode == MODE_8BALL) {
       draw8Ball();
-    } else {
+    } else if (mode == MODE_DICE) {
       drawDice();
+    } else if (mode == MODE_SNAKE) {
+      drawSnake();
+    } else if (mode == MODE_FLAPPY) {
+      drawFlappy();
+    } else if (mode == MODE_TILT_MAZE) {
+      drawMaze();
+    } else {
+      drawDino();
     }
 
     display.sendBuffer();
