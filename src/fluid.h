@@ -12,7 +12,7 @@
 
 namespace fluid {
 
-enum Preset { PRESET_WATER = 0, PRESET_HONEY = 1, PRESET_MERCURY = 2, PRESET_COUNT = 3 };
+enum Preset { PRESET_WATER = 0, PRESET_HONEY = 1, PRESET_MERCURY = 2, PRESET_SPLASH = 3, PRESET_COUNT = 4 };
 
 void init(int preset);                 // (re)fill the container and select the preset
 void setPreset(int preset);            // change fluid behaviour without resetting the particles
@@ -22,6 +22,9 @@ int particleCount();
 // Advance the simulation by one display frame (several fixed substeps inside).
 // gx, gy: effective gravity in screen space, Q8 fixed point (256 = 1 g). Values are clamped.
 void step(int32_t gx_q8, int32_t gy_q8);
+
+// Rotation impulse (see fluid.cpp). Used by the Splash preset with the gyro.
+void spin(int32_t dw_q8);
 
 // OR the fluid into a 128x64 page-format buffer (SSD1306/SH1106 layout: byte = page*128 + x,
 // bit = y & 7). The caller clears the buffer first.

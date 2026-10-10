@@ -725,7 +725,11 @@ struct TiltState {
   float fx0, fy0;                // fallback neutral reading
   float tx, ty;                  // smoothed relative tilt, angle-like, +x right, +y down
   float gx, gy;                  // smoothed in-plane gravity, neutral pose = (0, 1)
-} tilt = {false, 0, 0, 0, 0, false, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1};
+  float rgx, rgy;                // unsmoothed in-plane gravity (includes the push from moving the device)
+  float sgx, sgy;                // very slow gravity estimate, so rgx-sgx is the shake / slosh part
+  float zSign;                   // +1/-1: direction of the screen-normal gyro axis
+  float lastWz;                  // previous gyro spin, for the angular acceleration kick
+} tilt = {false, 0, 0, 0, 0, false, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 0};
 
 void tiltBegin() {
   tilt.calibrating = true;
@@ -734,6 +738,9 @@ void tiltBegin() {
   tilt.tx = tilt.ty = 0;
   tilt.gx = 0;
   tilt.gy = 1;
+  tilt.rgx = tilt.sgx = 0;
+  tilt.rgy = tilt.sgy = 1;
+  tilt.lastWz = 0;
   tiltSeen = motionSeq;
 }
 
@@ -754,6 +761,7 @@ void tiltUpdate() {
         if (mz >= 0) { tilt.rX = -tilt.dY; tilt.rY = tilt.dX; }   // screen faces the user
         else         { tilt.rX = tilt.dY;  tilt.rY = -tilt.dX; }  // sensor mounted facing away
         tilt.down0 = inplane;
+        tilt.zSign = (mz >= 0) ? 1.0f : -1.0f;
         tilt.scale = 1.0f / fmaxf(0.35f, sqrtf(fmaxf(0.0f, 1.0f - inplane * inplane)));
       } else {
         tilt.autoAxes = false;         // held nearly flat: use the fixed axis mapping from config.h
@@ -786,6 +794,10 @@ void tiltUpdate() {
   tilt.ty += (constrain(rawy, -1.5f, 1.5f) - tilt.ty) * k;
   tilt.gx += (constrain(rawgx, -2.0f, 2.0f) - tilt.gx) * k;
   tilt.gy += (constrain(rawgy, -2.0f, 2.0f) - tilt.gy) * k;
+  tilt.rgx = constrain(rawgx, -3.0f, 3.0f);
+  tilt.rgy = constrain(rawgy, -3.0f, 3.0f);
+  tilt.sgx += (tilt.rgx - tilt.sgx) * 0.06f;
+  tilt.sgy += (tilt.rgy - tilt.sgy) * 0.06f;
 }
 
 // Small banner (black box, white text) drawn over whatever is on screen.
@@ -975,7 +987,19 @@ void drawFluid(uint32_t now) {
     return;
   }
   // The gravity vector is already in screen space with the calibrated pose = straight down.
-  fluid::step((int32_t)(tilt.gx * 256.0f), (int32_t)(tilt.gy * 256.0f));
+  if (fluidPreset == fluid::PRESET_SPLASH && !tilt.calibrating) {
+    // Splash: gravity + 3x the fast part of the accelerometer (slosh when you move or shake the device),
+    // plus the gyro: twisting the device swirls the liquid the other way.
+    float gx = tilt.sgx + 3.0f * (tilt.rgx - tilt.sgx);
+    float gy = tilt.sgy + 3.0f * (tilt.rgy - tilt.sgy);
+    fluid::step((int32_t)(gx * 256.0f), (int32_t)(gy * 256.0f));
+    float wz = motion.gz * tilt.zSign;                 // deg/s about the screen normal
+    float dw = constrain((wz - tilt.lastWz) * 1.0f, -400.0f, 400.0f);
+    tilt.lastWz = wz;
+    if (fabsf(dw) > 8.0f) fluid::spin((int32_t)dw);
+  } else {
+    fluid::step((int32_t)(tilt.gx * 256.0f), (int32_t)(tilt.gy * 256.0f));
+  }
   fluid::render(display.getBufferPtr());
 
   if (tilt.calibrating) {

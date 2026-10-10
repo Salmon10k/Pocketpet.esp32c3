@@ -26,6 +26,7 @@ struct PresetParams {
   int32_t cohesion;  // scale (Q8) applied to the attractive (negative) pressure
   int32_t visc;      // neighbour velocity smoothing (Q8 fraction per substep)
   int32_t damp;      // velocity damping per substep (Q8, 256 = none)
+  int32_t gscale;    // how strongly gravity pulls (Q8, 256 = 1x): honey creeps, mercury rushes
 };
 
 // Experiment hooks for tools/fluidtest (override with -D). Defaults are the shipped values.
@@ -49,10 +50,11 @@ struct PresetParams {
 #endif
 
 static const PresetParams PRESETS[PRESET_COUNT] = {
-  //   name       rho0  k    kNear cohesion visc damp
-  {"WATER",      FLUID_W_RHO0, FLUID_W_K, FLUID_W_KN, FLUID_W_COH, FLUID_W_VISC, FLUID_W_DAMP},
-  {"HONEY",      380,  70,  90,   120,     70,  250},
-  {"MERCURY",    380,  80,  90,   150,     2,   255},
+  //   name       rho0  k    kNear cohesion visc damp  gscale
+  {"WATER",      FLUID_W_RHO0, FLUID_W_K, FLUID_W_KN, FLUID_W_COH, FLUID_W_VISC, FLUID_W_DAMP, 256},
+  {"HONEY",      380,  70,  90,   120,     90,  244,  90},    // thick and slow: weak pull, heavy damping
+  {"MERCURY",    380,  80,  90,   170,     2,   255,  320},   // heavy and fast, beads up, hardly any drag
+  {"SPLASH",     380,  70,  90,   40,      4,   255,  256},   // light and bouncy; main.cpp feeds it motion
 };
 
 static int curPreset = 0;
@@ -251,9 +253,21 @@ static void substep(int32_t gx, int32_t gy) {
 void step(int32_t gx_q8, int32_t gy_q8) {
   gx_q8 = clampi(gx_q8, -400, 400);
   gy_q8 = clampi(gy_q8, -400, 400);
-  int32_t gx = rz(gx_q8 * GRAV_STEP_Q8, 8);
-  int32_t gy = rz(gy_q8 * GRAV_STEP_Q8, 8);
+  const int32_t gs = PRESETS[curPreset].gscale;
+  int32_t gx = rz(rz(gx_q8 * GRAV_STEP_Q8, 8) * gs, 8);
+  int32_t gy = rz(rz(gy_q8 * GRAV_STEP_Q8, 8) * gs, 8);
   for (int s = 0; s < SUBSTEPS; ++s) substep(gx, gy);
+}
+
+// Rotation kick: the container turned, the liquid lags behind and swirls the other way.
+// dw_q8 = change of angular speed this frame (+ = clockwise on screen), Q8, about 256 = a strong twist.
+void spin(int32_t dw_q8) {
+  const int32_t cx = (W * 256) / 2, cy = (H * 256) / 2;
+  for (int i = 0; i < N; ++i) {
+    int32_t rx = px_[i] - cx, ry = py_[i] - cy;
+    vx_[i] = clampi(vx_[i] + rz(-ry * dw_q8, 16), -MAX_SPEED, MAX_SPEED);
+    vy_[i] = clampi(vy_[i] + rz(rx * dw_q8, 16), -MAX_SPEED, MAX_SPEED);
+  }
 }
 
 // ---------------- Rendering ----------------
