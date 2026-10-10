@@ -33,8 +33,3 @@
 // If the eyes look the wrong way when you tilt the keychain, flip these (1 or -1).
 #define TILT_X_SIGN  1
 #define TILT_Y_SIGN  1
-
-// ---- Optional Wi-Fi clock ----
-// Fill these in to enable the Online NTP clock. Leave SSID empty to keep Wi-Fi off.
-#define WIFI_SSID ""
-#define WIFI_PASSWORD ""
