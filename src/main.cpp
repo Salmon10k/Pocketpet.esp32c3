@@ -750,9 +750,10 @@ void mazeTick() {
   int row = constrain((int)((mazeY - 18) / MAZE_CELL), 0, MAZE_ROWS-1);
   int ncol = constrain((int)((nx - 4) / MAZE_CELL), 0, MAZE_COLS-1);
   int nrow = constrain((int)((ny - 18) / MAZE_CELL), 0, MAZE_ROWS-1);
-  if (ncol != col && !mazeCanEnter(col, row, ncol, row)) nx = mazeX;
-  if (nrow != row && !mazeCanEnter(col, row, col, nrow)) ny = mazeY;
+  if (ncol != col && !mazeCanEnter(col, row, ncol, row)) { nx = mazeX; ncol = col; }
+  if (nrow != row && !mazeCanEnter(col, row, col, nrow)) { ny = mazeY; nrow = row; }
   mazeX = nx; mazeY = ny;
+  if (ncol != col || nrow != row) ++mazeMoves;
   if (ncol == MAZE_COLS-1 && nrow == MAZE_ROWS-1) mazeWon = true;
 }
 void drawMaze() {
