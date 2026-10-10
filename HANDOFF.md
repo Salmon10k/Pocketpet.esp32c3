@@ -24,16 +24,15 @@ GPIO 8/9 are strapping pins, GPIO 0-5 are the only deep-sleep wake pins on the C
 
 ## Source layout
 - `src/config.h`: pins, addresses, timing and tuning macros.
-- `src/main.cpp`: hardware init, input handling, MPU, stats, the pet itself, menu and main loop.
-- Other `src/*.cpp` files hold one family of screens each (see "Status" for what exists).
-- `tools/hostcheck/`: host-side syntax check (see "Testing").
+- `src/main.cpp`: current firmware, hardware init, input handling, MPU, stats, pet animation/drawing, menus and mini-games.
+- `src/config.h`: hardware pins and tuning.
+- The firmware is currently monolithic in `main.cpp`; do not assume the planned screen-registry/multi-file architecture exists yet.
 - `README.md`: user-facing docs. Keep it in sync when behaviour changes.
 
 ## Architecture: screens
-Every mode is a `Screen { name, enter(), update(now, Input), draw(now) }` (declared in `src/app.h`).
-`main.cpp` owns a menu tree (root, Tools, Games, Online submenus) that points at screens. Rules:
-- Screens draw into the shared `display` buffer; the main loop does `clearBuffer()` / `sendBuffer()`.
-- A screen leaves by calling `appExit()`. Convention: **B = back/exit/pause**, A and C are the actions.
+Current implementation uses a `Mode` enum and dispatches input/drawing in `main.cpp`. The menu tree has root, Tools, Games and Online. Rules:
+- Modes draw into the shared `display` buffer; the main loop does `clearBuffer()` / `sendBuffer()`.
+- Convention: **B = back/exit**, A and C are actions. The touch pad acts as Home outside Pet mode.
 - Anything that must keep running outside its screen (Pomodoro timer, step counting, WiFi state machine)
   has a `xxxTick(now)` function that the main loop calls every iteration.
 - Use `notify("text", ms)` for a banner shown over any screen (e.g. "Pomodoro done").
@@ -66,9 +65,9 @@ Salman confirms on the device.
 |------|-------|
 | Pet mode (moods, touch, shake, sleep), Stats, Motion test | DONE and TESTED (Salman: "looks good") |
 | I2C swap (OLED hw, MPU soft), touch on GPIO4 | DONE and TESTED |
-| Screen registry + scrolling submenus | TODO (batch 1) |
-| Temp mode (MPU die temperature), Magic 8-ball, Dice | TODO (batch 1) |
-| Games: Snake, Flappy, Tilt maze | TODO (batch 2) |
+| Expanded root/Tools/Games/Online menus | DONE (monolithic implementation) |
+| Temperature, Magic 8-ball, Dice | DONE, needs Salman hardware confirmation |
+| Games: Snake, Flappy, Tilt Maze, Dino Runner | DONE in code, needs Salman hardware confirmation |
 | Pomodoro + Stopwatch | TODO (batch 3) |
 | WiFi clock (NTP) + Weather (Open-Meteo), pet sleeps at night | TODO (batch 4) |
 | Spirit level, Step counter | TODO (batch 5) |
@@ -76,11 +75,10 @@ Salman confirms on the device.
 | Battery monitoring (GPIO3 divider), deep sleep + wake on touch | NOT STARTED, needs hardware first |
 
 ## Currently working on
-Batch 1 (screen registry, submenus, Temp / 8-ball / Dice). If this line still says batch 1 and the table
-above still shows TODO, nothing of it is pushed yet: check `git log` before assuming.
+Touch Home control and mini-games were just added. Salman has confirmed the previous Batch 1 firmware worked on hardware. New mini-games and Home behavior still need hardware testing.
 
 ## Known caveats / things that will bite you
-- Nothing since the first pet version has been run on hardware until Salman confirms it.
+- Keep the pet animation code unchanged unless Salman explicitly asks. Salman has confirmed the existing pet animations look good.
 - MPU6050 temperature is the chip's own die temperature: it reads a few degrees above room temperature.
   `TEMP_OFFSET_C` in `config.h` exists to correct it.
 - Tilt direction depends on how the MPU is mounted; `TILT_X_SIGN` / `TILT_Y_SIGN` flip it.
