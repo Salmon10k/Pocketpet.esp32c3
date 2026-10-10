@@ -25,6 +25,7 @@ void step(int32_t gx_q8, int32_t gy_q8);
 
 // Rotation impulse (see fluid.cpp). Used by the Splash preset with the gyro.
 void spin(int32_t dw_q8);
+void agitate(int32_t amt_q8);       // random velocity kick on every particle (shake)
 
 // OR the fluid into a 128x64 page-format buffer (SSD1306/SH1106 layout: byte = page*128 + x,
 // bit = y & 7). The caller clears the buffer first.

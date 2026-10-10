@@ -265,8 +265,17 @@ void spin(int32_t dw_q8) {
   const int32_t cx = (W * 256) / 2, cy = (H * 256) / 2;
   for (int i = 0; i < N; ++i) {
     int32_t rx = px_[i] - cx, ry = py_[i] - cy;
-    vx_[i] = clampi(vx_[i] + rz(-ry * dw_q8, 16), -MAX_SPEED, MAX_SPEED);
-    vy_[i] = clampi(vy_[i] + rz(rx * dw_q8, 16), -MAX_SPEED, MAX_SPEED);
+    vx_[i] = clampi(vx_[i] + rz(-ry * dw_q8, 12), -MAX_SPEED, MAX_SPEED);
+    vy_[i] = clampi(vy_[i] + rz(rx * dw_q8, 12), -MAX_SPEED, MAX_SPEED);
+  }
+}
+
+// Turbulence kick: random velocity on every particle. Sign-free, used when the gyro says the device is shaken.
+void agitate(int32_t amt_q8) {
+  if (amt_q8 <= 0) return;
+  for (int i = 0; i < N; ++i) {
+    vx_[i] = clampi(vx_[i] + (int32_t)(rnd() % (uint32_t)(2 * amt_q8 + 1)) - amt_q8, -MAX_SPEED, MAX_SPEED);
+    vy_[i] = clampi(vy_[i] + (int32_t)(rnd() % (uint32_t)(2 * amt_q8 + 1)) - amt_q8, -MAX_SPEED, MAX_SPEED);
   }
 }
 

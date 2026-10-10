@@ -987,19 +987,26 @@ void drawFluid(uint32_t now) {
     return;
   }
   // The gravity vector is already in screen space with the calibrated pose = straight down.
+  float gx = tilt.gx, gy = tilt.gy;
   if (fluidPreset == fluid::PRESET_SPLASH && !tilt.calibrating) {
-    // Splash: gravity + 3x the fast part of the accelerometer (slosh when you move or shake the device),
-    // plus the gyro: twisting the device swirls the liquid the other way.
-    float gx = tilt.sgx + 3.0f * (tilt.rgx - tilt.sgx);
-    float gy = tilt.sgy + 3.0f * (tilt.rgy - tilt.sgy);
-    fluid::step((int32_t)(gx * 256.0f), (int32_t)(gy * 256.0f));
+    // Splash = water with momentum. Tilting flicks the liquid a bit further than the tilt itself (the change
+    // of tilt per frame is added on top), a shake or flick of the gyro stirs it up, and twisting the
+    // device in its plane swirls it. Moving the device only adds a small push (rgx - sgx).
+    static float lastGx = 0, lastGy = 1;
+    float leadX = (tilt.gx - lastGx) * 5.0f, leadY = (tilt.gy - lastGy) * 5.0f;
+    lastGx = tilt.gx; lastGy = tilt.gy;
+    gx = tilt.gx + constrain(leadX, -1.0f, 1.0f) + 0.5f * (tilt.rgx - tilt.sgx);
+    gy = tilt.gy + constrain(leadY, -1.0f, 1.0f) + 0.5f * (tilt.rgy - tilt.sgy);
+    float rate = fabsf(motion.gx) + fabsf(motion.gy) + fabsf(motion.gz);   // total rotation speed, deg/s
+    if (rate > 120.0f) fluid::agitate((int32_t)constrain((rate - 120.0f) * 0.25f, 0.0f, 60.0f));
     float wz = motion.gz * tilt.zSign;                 // deg/s about the screen normal
     float dw = constrain((wz - tilt.lastWz) * 1.0f, -400.0f, 400.0f);
     tilt.lastWz = wz;
     if (fabsf(dw) > 8.0f) fluid::spin((int32_t)dw);
-  } else {
-    fluid::step((int32_t)(tilt.gx * 256.0f), (int32_t)(tilt.gy * 256.0f));
   }
+  gx *= FLUID_FLIP_X;
+  gy = (gy - 1.0f) * FLUID_FLIP_Y + 1.0f;   // flip tilt around the neutral pose (straight down)
+  fluid::step((int32_t)(gx * 256.0f), (int32_t)(gy * 256.0f));
   fluid::render(display.getBufferPtr());
 
   if (tilt.calibrating) {
