@@ -67,15 +67,15 @@ Salman confirms on the device.
 | I2C swap (OLED hw, MPU soft), touch on GPIO4 | DONE and TESTED |
 | Expanded root/Tools/Games/Online menus | DONE (monolithic implementation) |
 | Temperature, Magic 8-ball, Dice | DONE and TESTED (Salman confirmed) |
-| Games: Snake, Flappy, Tilt Maze, Dino Runner | DONE in code, needs Salman hardware confirmation |
+| Games: Snake, Flappy, procedural Tilt Maze, Dino Runner with crouch/obstacle variety | DONE in code, needs Salman hardware confirmation |
 | Pomodoro + Stopwatch | TODO (batch 3) |
-| WiFi clock (NTP) + Weather (Open-Meteo), pet sleeps at night | TODO (batch 4) |
+| Wi-Fi NTP clock | DONE in code, needs local credentials and hardware confirmation |\n| Weather (Open-Meteo), pet sleeps at night | TODO |
 | Spirit level, Step counter | TODO (batch 5) |
 | BLE shutter remote | SKIPPED by Salman for now (do not build unless asked) |
 | Battery monitoring (GPIO3 divider), deep sleep + wake on touch | NOT STARTED, needs hardware first |
 
 ## Currently working on
-Batch 1 (Temperature, Magic 8-ball, Dice) is confirmed working on hardware. Touch Home and Snake / Flappy / Tilt Maze / Dino Runner were just added and still need hardware testing. The host syntax check could not be run from this environment because GitHub network access was unavailable.
+Batch 1 (Temperature, Magic 8-ball, Dice) is confirmed working on hardware. Touch Home and Snake / Flappy / Tilt Maze / Dino Runner were added earlier and still need hardware testing. The Tilt Maze now generates a new solvable maze on entry, uses a 45-degree forward-pitch baseline and reversed left/right movement. Dino Runner now supports jump and crouch with cactus clusters and flying birds. Online now has an optional Wi-Fi NTP clock for Pakistan time; credentials are blank by default in `src/config.h`, so Wi-Fi stays disabled until configured. The host syntax check has not been run for this batch.
 
 ## Known caveats / things that will bite you
 - Keep the pet animation code unchanged unless Salman explicitly asks. Salman has confirmed the existing pet animations look good.
