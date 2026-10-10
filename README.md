@@ -4,118 +4,96 @@ Keychain-sized digital pet gadget built around an ESP32-C3 Super Mini with a 1.3
 
 ## Current hardware wiring
 
-**Important:** The OLED and MPU6050 are **not on the same I2C bus anymore**.
+**Important:** the OLED and MPU6050 are on **separate I2C buses**, and the roles are:
 
-The ESP32-C3 has one hardware I2C controller, so the current firmware uses:
-- **Hardware I2C (`Wire`) for the MPU6050**
-- **Software I2C through U8g2 for the OLED**
+- **OLED = hardware I2C (`Wire`)**, because it moves a full frame every refresh and needs the speed.
+- **MPU6050 = software I2C (SoftWire)**, because it only reads 14 bytes at a time.
 
 | Part | Pin | ESP32-C3 GPIO | Notes |
 |------|-----|---------------|-------|
-| MPU6050 | SDA | **5** | Hardware I2C |
-| MPU6050 | SCL | **6** | Hardware I2C |
-| OLED SH1106 | SDA | **8** | Software I2C |
-| OLED SH1106 | SCL | **9** | Software I2C |
-| Button A | one leg to GND | **0** | Up / previous |
+| OLED SH1106 | SDA | **8** | Hardware I2C, 400 kHz |
+| OLED SH1106 | SCL | **9** | Hardware I2C, 400 kHz |
+| MPU6050 | SDA | **5** | Software I2C (SoftWire) |
+| MPU6050 | SCL | **6** | Software I2C (SoftWire) |
+| Button A | one leg to GND | **0** | Up / previous / tickle |
 | Button B | one leg to GND | **1** | Select / back |
-| Button C | one leg to GND | **2** | Down / next |
-| Touch pad | OUT | **3** | TTP223-style, HIGH when touched |
+| Button C | one leg to GND | **2** | Down / next / boop |
+| Touch pad | OUT | **4** | TTP223-style, HIGH when touched (the pin next to 3V3) |
+
+The physical wiring did not change when the I2C roles were swapped. Only the drivers did.
 
 ### I2C addresses
 - OLED: `0x3C`
 - MPU6050: `0x68`
 
-### OLED
-
-The current OLED is confirmed working as a **1.3" SH1106 128x64 I2C display**.
-
-A standalone Arduino test on GPIO 8/9 successfully displayed text, confirming the OLED and wiring work.
-
-The actual Pocketpet firmware does **not** use `Wire.begin(8, 9)` for the OLED. It uses U8g2 software I2C because `Wire` is reserved for the MPU6050 on GPIO 5/6.
-
-### Important GPIO note
-
-GPIO 8 and GPIO 9 are ESP32-C3 strapping pins. The OLED has been tested successfully on these pins, but if the board ever becomes unreliable during boot, investigate these pins first.
+### GPIO notes
+- GPIO 8 and GPIO 9 are ESP32-C3 strapping pins (they are also the C3's default I2C pins). The OLED has been tested on them. If the board ever becomes unreliable during boot, investigate these pins first.
+- GPIO3 is the only free ADC1 pin left. Keep it for the battery voltage divider.
+- GPIO 0-5 can wake the C3 from deep sleep, so the touch pad (GPIO4) and buttons (0, 1, 2) all work for wake-up later.
 
 ## Current firmware
 
-The current `src/main.cpp` contains:
-- Menu system
-- Pet mode
-- Motion test mode
-- SH1106 OLED graphics
-- Animated blinking eyes
-- Eyes follow MPU6050 tilt
-- Touch makes the pet happy
-- Shaking makes the pet dizzy
-- MPU6050 acceleration, gyro and temperature readings
-- Button debouncing
-- MPU6050 failure/recovery handling
-- Serial diagnostics
+### Menu
+Pet, Stats, Motion test.
 
-### Current architecture
+### Pet mode (companion style, nothing can die)
+- Eyes ease smoothly between moods, blink on their own, sometimes double-blink or wink, and wander around when idle.
+- Pupils follow tilt from the MPU6050.
+- **Moods:** neutral, happy, sad (when ignored), sleepy (low energy or no activity for 30 s), asleep (no activity for 60 s, with floating Zzz).
+- **Touch:** tap = love face and hearts. Hold the pad for 0.6 s = purr, which keeps raising happiness.
+- **Motion:** shake = dizzy spiral eyes (and a small happiness drop). A sharp pickup, bump or drop = surprised.
+- **Buttons in Pet mode:** A = tickle (laughs), C = boop (surprised), B = back to the menu.
+- Any touch, button press or movement wakes it up.
 
-```text
-ESP32-C3
-│
-├── Hardware I2C / Wire
-│   └── MPU6050
-│       ├── SDA → GPIO 5
-│       └── SCL → GPIO 6
-│
-└── U8g2 Software I2C
-    └── SH1106 OLED
-        ├── SDA → GPIO 8
-        └── SCL → GPIO 9
-```
+### Stats
+Happiness and energy are saved to flash (about every 2 minutes when they changed, and when leaving Pet mode), so the pet remembers across reboots. The Stats screen shows both bars and a lifetime pet count.
 
-**Do not change the OLED back to hardware I2C on `Wire` unless the bus architecture is changed deliberately.** The current setup depends on the MPU6050 owning the hardware `Wire` bus.
+### Other
+- Button debouncing with press events.
+- MPU6050 and OLED are re-checked every 2 seconds and recover if they drop out.
+- Serial diagnostics once a second (buttons, touch, OLED, MPU, happy, energy, pets).
 
 ## Build
 
 1. Install PlatformIO in VS Code.
-2. Open this folder.
+2. Open this folder (it will download U8g2, SoftWire and AsyncDelay).
 3. Plug the ESP32-C3 Super Mini in with a data-capable USB cable.
 4. Build and upload with PlatformIO.
 5. Board environment: `esp32-c3-supermini`.
 6. USB CDC on boot is enabled in `platformio.ini`.
 
-## Controls
-- Menu: **A = up**, **C = down**, **B = select**
-- Pet / Motion test: **B = back**
-- Pet reacts to:
-  - Tilt → eyes follow movement
-  - Touch → happy face
-  - Shake → dizzy face
-
 ## Files
-- `src/main.cpp` → main firmware and pet logic
-- `src/config.h` → all GPIO assignments and I2C addresses
-- `platformio.ini` → PlatformIO build configuration
+- `src/main.cpp` -> main firmware and pet logic
+- `src/config.h` -> all GPIO assignments, I2C addresses and pet tuning
+- `platformio.ini` -> PlatformIO build configuration
 
 When changing wiring, update `src/config.h` first.
 
+## First-flash checklist
+- [ ] Builds and uploads
+- [ ] OLED shows the menu (serial boot log says "OLED found")
+- [ ] Serial shows `mpu=1`
+- [ ] `touch=` flips to 1 when the pad is touched
+- [ ] Eyes follow tilt the right way (if not, flip `TILT_X_SIGN` / `TILT_Y_SIGN` in `config.h`)
+- [ ] Shake gives dizzy eyes, sharp pickup gives surprised eyes
+
 ## Status
 - [x] Repo + starter project
-- [x] OLED confirmed working
-- [x] OLED confirmed as SH1106
-- [x] OLED moved to GPIO 8/9
-- [x] MPU6050 kept on GPIO 5/6 hardware I2C
-- [x] OLED switched to U8g2 software I2C
-- [x] Basic pet UI and motion test
-- [ ] Confirm touch pin on final hardware
+- [x] OLED confirmed working (SH1106, GPIO 8/9)
+- [x] Touch pad soldered on, signal on GPIO4
+- [x] I2C roles swapped: OLED on hardware I2C, MPU6050 on SoftWire
+- [x] Improved pet mode: moods, eased eyes, touch petting, motion reactions, sleep, hearts, Zzz
+- [x] Stats screen with flash-saved happiness and energy
+- [ ] Verify the new firmware on hardware
+- [ ] Try the RoboEyes library for the eyes (optional, only if the current look is not liked)
 - [ ] Temperature mode
 - [ ] Game mode
-- [ ] WiFi features
-- [ ] Battery monitoring
+- [ ] WiFi features (NTP clock, sleep at night)
+- [ ] Battery monitoring (GPIO3 divider)
 - [ ] Deep sleep / wake on touch
 
 ## Notes for future development
 
-Before changing the I2C setup, remember:
+> **OLED = hardware I2C on GPIO 8/9. MPU6050 = software I2C (SoftWire) on GPIO 5/6.**
 
-> **MPU6050 = hardware I2C on GPIO 5/6. OLED = software I2C on GPIO 8/9.**
-
-The OLED originally failed when it shared GPIO 5/6 with the MPU6050 in the physical build. A standalone OLED test on GPIO 8/9 worked, so the firmware was changed to use separate buses.
-
-If another developer or AI agent continues this project, read `src/config.h` and this README before changing pin assignments or the U8g2 constructor.
+If another developer or AI agent continues this project, read `src/config.h` and this README before changing pin assignments or the bus setup. The pet logic is separated from the drawing: `currentFace()` decides the mood, `faceParams()` maps a mood to eye/mouth targets, and `drawPet()` eases toward them.
