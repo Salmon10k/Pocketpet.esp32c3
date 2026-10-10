@@ -97,3 +97,15 @@ When changing wiring, update `src/config.h` first.
 > **OLED = hardware I2C on GPIO 8/9. MPU6050 = software I2C (SoftWire) on GPIO 5/6.**
 
 If another developer or AI agent continues this project, read `src/config.h` and this README before changing pin assignments or the bus setup. The pet logic is separated from the drawing: `currentFace()` decides the mood, `faceParams()` maps a mood to eye/mouth targets, and `drawPet()` eases toward them.
+
+
+## Work completed today (2026-10-10)
+
+Today’s development session focused on expanding the games and preparing the online clock feature:
+
+- **Tilt Maze:** planned/prototyped a procedural maze system, with randomized maze generation, solvable layouts, reversed left/right tilt behavior, and a 45° forward-facing MPU6050 neutral angle.
+- **Dino Runner:** expanded the design with jump/crouch controls, additional obstacle types, flying obstacles, and more polished movement/animation.
+- **Online clock:** added the Wi-Fi/NTP clock direction, including local credential handling through the ignored `src/secrets.h` file and an example template at `src/secrets.example.h`.
+- **Documentation:** updated the handoff notes and README to record the work from this session.
+
+**Hardware status:** these new changes were not fully hardware-validated today. The existing Batch 1 hardware features remain the known-tested baseline. Do not treat the new maze, Dino upgrades, or Wi-Fi clock as hardware-confirmed until they are built, flashed, and tested on the device.
