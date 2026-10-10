@@ -3,6 +3,8 @@
 #include <SoftWire.h>
 #include <U8g2lib.h>
 #include <Preferences.h>
+#include <WiFi.h>
+#include <time.h>
 #include "config.h"
 
 // OLED: 1.3" SH1106 on hardware I2C (SDA = GPIO 8, SCL = GPIO 9).
@@ -538,7 +540,7 @@ const char *toolsItems[] = {"Temperature"};
 const int TOOLS_COUNT = 1;
 const char *gamesItems[] = {"Magic 8-ball", "Dice", "Snake", "Flappy", "Tilt Maze", "Dino Runner"};
 const int GAMES_COUNT = 6;
-const char *onlineItems[] = {"Coming soon"};
+const char *onlineItems[] = {"Wi-Fi clock"};
 const int ONLINE_COUNT = 1;
 
 int menuIndex = 0;
@@ -551,6 +553,55 @@ const char *eightBallAnswers[] = {
 const int EIGHT_BALL_COUNT = 8;
 int eightBallIndex = 0;
 int diceValue = 1;
+
+// ---------------- Online clock ----------------
+bool clockWifiStarted = false;
+uint32_t clockConnectStarted = 0;
+void startOnlineClock() {
+  if (clockWifiStarted) return;
+  clockWifiStarted = true;
+  clockConnectStarted = millis();
+  if (strlen(WIFI_SSID) == 0) return;
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  setenv("TZ", "PKT-5", 1); tzset();
+  configTime(18000, 0, "pool.ntp.org", "time.google.com");
+}
+void drawOnlineClock() {
+  display.setFont(u8g2_font_7x13B_tf);
+  display.drawStr(0, 12, "POCKET CLOCK");
+  display.drawHLine(0, 15, 128);
+  display.setFont(u8g2_font_5x7_tf);
+  if (strlen(WIFI_SSID) == 0) {
+    display.drawStr(0, 28, "Set Wi-Fi in src/config.h");
+    display.drawStr(0, 40, "SSID + password needed");
+    display.drawStr(0, 61, "B back  Touch home");
+    return;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    display.drawStr(0, 29, "Connecting to Wi-Fi...");
+    display.drawStr(0, 42, WiFi.status() == WL_CONNECT_FAILED ? "Connection failed" : "Waiting for network");
+    display.drawStr(0, 61, "B back  Touch home");
+    return;
+  }
+  time_t nowTime = time(nullptr);
+  if (nowTime < 1700000000) {
+    display.drawStr(0, 26, "Wi-Fi connected");
+    display.drawStr(0, 38, "Syncing time from NTP...");
+  } else {
+    struct tm tmNow;
+    localtime_r(&nowTime, &tmNow);
+    char clockLine[16], dateLine[24];
+    strftime(clockLine, sizeof(clockLine), "%H:%M:%S", &tmNow);
+    strftime(dateLine, sizeof(dateLine), "%a %d %b %Y", &tmNow);
+    display.setFont(u8g2_font_logisoso24_tn);
+    display.drawStr(10, 44, clockLine);
+    display.setFont(u8g2_font_6x10_tf);
+    display.drawStr(18, 56, dateLine);
+  }
+  display.setFont(u8g2_font_5x7_tf);
+  display.drawStr(0, 63, "NTP  UTC+5  B back");
+}
 
 // ---------------- Mini-game state ----------------
 // All games are original, compact monochrome adaptations for the 128x64 OLED.
@@ -649,7 +700,77 @@ void drawFlappy() {
   }
 }
 
-// Tilt Maze: tilt the board to guide the ball through a simple maze.
+// Tilt Maze: procedural perfect maze (DFS), 12 x 4 cells. Each cell stores N/E/S/W walls.
+const int MAZE_COLS = 12, MAZE_ROWS = 4, MAZE_CELL = 10;
+const uint8_t MW_N = 1, MW_E = 2, MW_S = 4, MW_W = 8;
+uint8_t mazeWalls[MAZE_ROWS][MAZE_COLS];
+bool mazeVisited[MAZE_ROWS][MAZE_COLS];
+float mazeX = 9, mazeY = 23;
+bool mazeWon = false;
+uint32_t mazeMoves = 0;
+void generateMaze() {
+  for (int r = 0; r < MAZE_ROWS; ++r)
+    for (int c = 0; c < MAZE_COLS; ++c) { mazeWalls[r][c] = 15; mazeVisited[r][c] = false; }
+  int stackC[MAZE_COLS * MAZE_ROWS], stackR[MAZE_COLS * MAZE_ROWS], top = 0;
+  stackC[0] = 0; stackR[0] = 0; mazeVisited[0][0] = true;
+  while (top >= 0) {
+    int c = stackC[top], r = stackR[top];
+    int nc[4], nr[4], dir[4], count = 0;
+    if (r > 0 && !mazeVisited[r-1][c]) { nc[count]=c; nr[count]=r-1; dir[count++]=MW_N; }
+    if (c < MAZE_COLS-1 && !mazeVisited[r][c+1]) { nc[count]=c+1; nr[count]=r; dir[count++]=MW_E; }
+    if (r < MAZE_ROWS-1 && !mazeVisited[r+1][c]) { nc[count]=c; nr[count]=r+1; dir[count++]=MW_S; }
+    if (c > 0 && !mazeVisited[r][c-1]) { nc[count]=c-1; nr[count]=r; dir[count++]=MW_W; }
+    if (!count) { --top; continue; }
+    int pick = random(count), d = dir[pick], x = nc[pick], y = nr[pick];
+    mazeWalls[r][c] &= (uint8_t)~d;
+    uint8_t opposite = d == MW_N ? MW_S : d == MW_E ? MW_W : d == MW_S ? MW_N : MW_E;
+    mazeWalls[y][x] &= (uint8_t)~opposite;
+    mazeVisited[y][x] = true;
+    ++top; stackC[top] = x; stackR[top] = y;
+  }
+}
+void resetMaze() { generateMaze(); mazeX = 9; mazeY = 23; mazeWon = false; mazeMoves = 0; }
+bool mazeCanEnter(int col, int row, int ncol, int nrow) {
+  if (ncol < 0 || ncol >= MAZE_COLS || nrow < 0 || nrow >= MAZE_ROWS) return false;
+  if (ncol > col) return !(mazeWalls[row][col] & MW_E);
+  if (ncol < col) return !(mazeWalls[row][col] & MW_W);
+  if (nrow > row) return !(mazeWalls[row][col] & MW_S);
+  if (nrow < row) return !(mazeWalls[row][col] & MW_N);
+  return true;
+}
+void mazeTick() {
+  if (mazeWon || !mpuOk) return;
+  float roll = atan2f(motion.ay, motion.az) * 57.29578f;
+  float pitch = atan2f(motion.ax, sqrtf(motion.ay*motion.ay + motion.az*motion.az)) * 57.29578f;
+  float vx = constrain(-roll * 0.055f, -1.25f, 1.25f);
+  float vy = constrain((pitch - 45.0f) * 0.055f, -1.25f, 1.25f);
+  float nx = constrain(mazeX + vx, 5.0f, 124.0f);
+  float ny = constrain(mazeY + vy, 17.0f, 60.0f);
+  int col = constrain((int)((mazeX - 4) / MAZE_CELL), 0, MAZE_COLS-1);
+  int row = constrain((int)((mazeY - 18) / MAZE_CELL), 0, MAZE_ROWS-1);
+  int ncol = constrain((int)((nx - 4) / MAZE_CELL), 0, MAZE_COLS-1);
+  int nrow = constrain((int)((ny - 18) / MAZE_CELL), 0, MAZE_ROWS-1);
+  if (ncol != col && !mazeCanEnter(col, row, ncol, row)) nx = mazeX;
+  if (nrow != row && !mazeCanEnter(col, row, col, nrow)) ny = mazeY;
+  mazeX = nx; mazeY = ny;
+  if (ncol == MAZE_COLS-1 && nrow == MAZE_ROWS-1) mazeWon = true;
+}
+void drawMaze() {
+  display.setFont(u8g2_font_5x7_tf);
+  char label[20]; snprintf(label, sizeof(label), "TILT MAZE  %lu", (unsigned long)mazeMoves);
+  display.drawStr(0, 7, label);
+  display.drawFrame(3, 17, 122, 42);
+  for (int r=0; r<MAZE_ROWS; ++r) for (int c=0; c<MAZE_COLS; ++c) {
+    int x=4+c*MAZE_CELL, y=18+r*MAZE_CELL; uint8_t w=mazeWalls[r][c];
+    if (w & MW_N) display.drawHLine(x, y, MAZE_CELL+1);
+    if (w & MW_W) display.drawVLine(x, y, MAZE_CELL+1);
+    if (c==MAZE_COLS-1 && (w & MW_E)) display.drawVLine(x+MAZE_CELL, y, MAZE_CELL+1);
+    if (r==MAZE_ROWS-1 && (w & MW_S)) display.drawHLine(x, y+MAZE_CELL, MAZE_CELL+1);
+  }
+  display.drawFrame(109, 48, 9, 9);
+  display.drawDisc((int)mazeX, (int)mazeY, 2);
+  if (mazeWon) { display.drawBox(35, 27, 58, 15); display.setDrawColor(0); display.drawStr(43, 37, "MAZE CLEAR"); display.setDrawColor(1); }
+}
 float mazeX = 12, mazeY = 22;
 bool mazeWon = false;
 void resetMaze() { mazeX = 12; mazeY = 22; mazeWon = false; }
@@ -676,7 +797,51 @@ void drawMaze() {
   if (mazeWon) display.drawStr(45, 60, "GOAL!");
 }
 
-// Dino Runner: a compact, offline endless-runner with jump physics and cacti.
+// Dino Runner: jump, crouch, mixed cactus clusters and low-flying birds.
+float dinoY = 49, dinoV = 0;
+int cactusX = 120, cactusH = 12, dinoObstacleType = 0;
+bool dinoCrouching = false;
+uint32_t dinoLastTick = 0;
+void resetDino() {
+  dinoY = 49; dinoV = 0; cactusX = 120; cactusH = random(9, 17);
+  dinoObstacleType = random(0, 3); dinoCrouching = false;
+  gameOver = false; gameScore = 0; dinoLastTick = millis();
+}
+void dinoTick(uint32_t now) {
+  if (gameOver || now - dinoLastTick < 32) return;
+  dinoLastTick = now; dinoV += 0.24f; dinoY += dinoV;
+  if (dinoY > 49) { dinoY = 49; dinoV = 0; }
+  int speed = 2 + min(4, (int)(gameScore / 8));
+  cactusX -= speed;
+  if (cactusX < -14) { cactusX = 128 + random(14, 38); dinoObstacleType = random(0, 3); cactusH = random(9, 18); gameScore++; }
+  if (cactusX < 27 && cactusX > 5) {
+    if (dinoObstacleType == 2) { if (!dinoCrouching && dinoY > 43) gameOver = true; }
+    else if (dinoY > 49 - cactusH + 5) gameOver = true;
+    if (dinoObstacleType == 1 && cactusX < 22 && cactusX > 8 && dinoY > 49 - cactusH + 5) gameOver = true;
+  }
+}
+void drawDino() {
+  char score[20]; snprintf(score, sizeof(score), "DINO %lu %s", (unsigned long)gameScore, dinoCrouching ? "DUCK" : "");
+  display.setFont(u8g2_font_5x7_tf); display.drawStr(0, 7, score); display.drawHLine(0, 55, 128);
+  int y = (int)dinoY;
+  if (dinoCrouching && y >= 48) {
+    display.drawBox(10, 45, 13, 6); display.drawBox(19, 42, 6, 5); display.drawPixel(23, 43);
+  } else {
+    display.drawBox(12, y - 10, 10, 8); display.drawBox(18, y - 14, 5, 6); display.drawPixel(21, y - 12);
+    display.drawBox(9, y - 5, 5, 3); int leg = (millis()/100)%2 ? 1 : -1;
+    display.drawLine(15, y-2, 14+leg, y+1); display.drawLine(20, y-2, 21-leg, y+1);
+  }
+  if (dinoObstacleType == 2) {
+    int wing = (millis()/100)%2 ? 2 : -2;
+    display.drawLine(cactusX-4, 32, cactusX+7, 32); display.drawLine(cactusX, 32, cactusX+wing, 28);
+    display.drawLine(cactusX+2, 32, cactusX+2-wing, 36); display.drawPixel(cactusX+8, 31);
+  } else {
+    display.drawBox(cactusX, 55-cactusH, 4, cactusH); display.drawBox(cactusX-3, 47-cactusH/2, 3, 4);
+    display.drawBox(cactusX+3, 43-cactusH/2, 3, 4);
+    if (dinoObstacleType == 1) { display.drawBox(cactusX+6, 55-cactusH+3, 4, cactusH-3); display.drawBox(cactusX+4, 45-cactusH/2, 3, 4); }
+  }
+  if (gameOver) { display.drawBox(27, 24, 74, 20); display.setDrawColor(0); display.drawStr(37, 36, "GAME OVER"); display.setDrawColor(1); display.setFont(u8g2_font_5x7_tf); display.drawStr(8, 63, "A jump  C duck  B back"); }
+}
 float dinoY = 49, dinoV = 0;
 int cactusX = 120, cactusH = 12;
 uint32_t dinoLastTick = 0;
@@ -876,6 +1041,7 @@ void enterMode(Mode m) {
     lastInteraction = now;
     overlay = OV_NONE;
   }
+  if (m == MODE_ONLINE) startOnlineClock();
   if (m == MODE_8BALL) eightBallIndex = random(EIGHT_BALL_COUNT);
   if (m == MODE_DICE) diceValue = random(1, 7);
   if (m == MODE_SNAKE) resetSnake();
@@ -1142,10 +1308,10 @@ void loop() {
     if (b) enterMode(MODE_GAMES);
   } else if (mode == MODE_DINO) {
     if (b) enterMode(MODE_GAMES);
-    else if (a || c) {
-      if (gameOver) resetDino();
-      else if (dinoY >= 48.5f) dinoV = -3.4f;
-      else if (c) dinoV += 0.9f;
+    else if (gameOver && (a || c)) resetDino();
+    else {
+      if (a && !dinoCrouching && dinoY >= 48.5f) dinoV = -3.7f;
+      if (c && dinoY >= 48.5f) dinoCrouching = !dinoCrouching;
     }
   } else if (b) {
     enterMode(MODE_MENU);
@@ -1170,7 +1336,7 @@ void loop() {
     } else if (mode == MODE_GAMES) {
       drawGamesMenu();
     } else if (mode == MODE_ONLINE) {
-      drawOnlineMenu();
+      drawOnlineClock();
     } else if (mode == MODE_TEMP) {
       drawTemperature();
     } else if (mode == MODE_8BALL) {
