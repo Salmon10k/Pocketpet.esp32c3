@@ -75,7 +75,7 @@ Salman confirms on the device.
 | Battery monitoring (GPIO3 divider), deep sleep + wake on touch | NOT STARTED, needs hardware first |
 
 ## Currently working on
-Batch 1 (Temperature, Magic 8-ball, Dice) is confirmed working on hardware. Touch Home and Snake / Flappy / Tilt Maze / Dino Runner were added earlier and still need hardware testing. The Tilt Maze now generates a new solvable maze on entry, uses a 45-degree forward-pitch baseline and reversed left/right movement. Dino Runner now supports jump and crouch with cactus clusters and flying birds. Online now has an optional Wi-Fi NTP clock for Pakistan time; credentials are blank by default in `src/config.h`, so Wi-Fi stays disabled until configured. The host syntax check has not been run for this batch.
+Batch 1 (Temperature, Magic 8-ball, Dice) is confirmed working on hardware. Touch Home and Snake / Flappy / Tilt Maze / Dino Runner were added earlier and still need hardware testing. The Tilt Maze now generates a new solvable maze on entry, uses a 45-degree forward-pitch baseline and reversed left/right movement. Dino Runner now supports jump and crouch with cactus clusters and flying birds. Online now has an optional Wi-Fi NTP clock for Pakistan time; credentials are supplied via local ignored `src/secrets.h` (copy `src/secrets.example.h`), so Wi-Fi stays disabled until configured. The host syntax check has not been run for this batch.
 
 ## Known caveats / things that will bite you
 - Keep the pet animation code unchanged unless Salman explicitly asks. Salman has confirmed the existing pet animations look good.
