@@ -512,27 +512,80 @@ void drawPet(uint32_t now) {
   if (face == F_SLEEPING) drawZzz(now);
 }
 
-// ---------------- Other screens ----------------
-enum Mode { MODE_MENU, MODE_PET, MODE_STATS, MODE_MOTION };
-Mode mode = MODE_MENU;
-int menuIndex = 0;
-const char *menuItems[] = {"Pet", "Stats", "Motion test"};
-const int MENU_COUNT = 3;
+// ---------------- Screens and menus ----------------
+enum Mode {
+  MODE_MENU,
+  MODE_PET,
+  MODE_STATS,
+  MODE_MOTION,
+  MODE_TOOLS,
+  MODE_GAMES,
+  MODE_ONLINE,
+  MODE_TEMP,
+  MODE_8BALL,
+  MODE_DICE
+};
 
-void drawMenu() {
+Mode mode = MODE_MENU;
+
+const char *rootItems[] = {"Pet", "Stats", "Motion test", "Tools", "Games", "Online"};
+const int ROOT_COUNT = 6;
+const char *toolsItems[] = {"Temperature"};
+const int TOOLS_COUNT = 1;
+const char *gamesItems[] = {"Magic 8-ball", "Dice"};
+const int GAMES_COUNT = 2;
+const char *onlineItems[] = {"Coming soon"};
+const int ONLINE_COUNT = 1;
+
+int menuIndex = 0;
+int submenuIndex = 0;
+
+const char *eightBallAnswers[] = {
+  "Yes.", "No.", "Maybe.", "Definitely!",
+  "Ask again.", "Looks good.", "Not likely.", "Absolutely."
+};
+const int EIGHT_BALL_COUNT = 8;
+int eightBallIndex = 0;
+int diceValue = 1;
+
+void drawMenuList(const char *title, const char *items[], int count, int selected) {
   display.setFont(u8g2_font_7x13B_tf);
-  display.drawStr(0, 12, "POCKETPET");
+  display.drawStr(0, 12, title);
   display.drawHLine(0, 15, 128);
 
   display.setFont(u8g2_font_7x13_tf);
-  for (int i = 0; i < MENU_COUNT; i++) {
-    int y = 30 + i * 14;
-    if (i == menuIndex) display.drawStr(0, y, ">");
-    display.drawStr(14, y, menuItems[i]);
+
+  // Four rows fit comfortably while leaving room for the controls hint.
+  const int visible = 3;
+  int first = selected - visible + 1;
+  if (first < 0) first = 0;
+  if (first > count - visible) first = max(0, count - visible);
+
+  for (int row = 0; row < visible && first + row < count; row++) {
+    int i = first + row;
+    int y = 29 + row * 13;
+    if (i == selected) display.drawStr(0, y, ">");
+    display.drawStr(14, y, items[i]);
   }
 
   display.setFont(u8g2_font_5x7_tf);
-  display.drawStr(0, 63, "A up  B ok  C down");
+  display.drawStr(0, 63, "A up  B ok/back  C down");
+}
+
+void drawMenu() {
+  drawMenuList("POCKETPET", rootItems, ROOT_COUNT, menuIndex);
+}
+
+void drawToolsMenu() {
+  drawMenuList("TOOLS", toolsItems, TOOLS_COUNT, submenuIndex);
+}
+
+void drawGamesMenu() {
+  drawMenuList("GAMES", gamesItems, GAMES_COUNT, submenuIndex);
+}
+
+void drawOnlineMenu() {
+  drawMenuList("ONLINE", onlineItems, ONLINE_COUNT, submenuIndex);
 }
 
 void drawBar(int y, const char *label, float value) {
@@ -580,15 +633,76 @@ void drawMotion() {
   display.drawStr(0, 54, line);
 }
 
+void drawTemperature() {
+  display.setFont(u8g2_font_7x13B_tf);
+  display.drawStr(0, 12, "TEMPERATURE");
+  display.drawHLine(0, 15, 128);
+
+  display.setFont(u8g2_font_10x20_tf);
+  if (mpuOk) {
+    char temp[16];
+    snprintf(temp, sizeof(temp), "%.1f C", motion.tempC);
+    display.drawStr(27, 40, temp);
+  } else {
+    display.drawStr(18, 40, "MPU offline");
+  }
+
+  display.setFont(u8g2_font_5x7_tf);
+  display.drawStr(0, 62, "MPU6050 die temperature");
+}
+
+void draw8Ball() {
+  display.setFont(u8g2_font_7x13B_tf);
+  display.drawStr(0, 12, "MAGIC 8-BALL");
+  display.drawHLine(0, 15, 128);
+
+  display.setFont(u8g2_font_7x13_tf);
+  display.drawStr(8, 35, eightBallAnswers[eightBallIndex]);
+
+  display.setFont(u8g2_font_5x7_tf);
+  display.drawStr(0, 63, "A/C ask again  B back");
+}
+
+void drawDice() {
+  display.setFont(u8g2_font_7x13B_tf);
+  display.drawStr(0, 12, "DICE");
+  display.drawHLine(0, 15, 128);
+
+  display.drawRFrame(48, 21, 32, 32, 5);
+  int x = 64;
+  int y = 37;
+  int p = 7;
+
+  if (diceValue == 1 || diceValue == 3 || diceValue == 5) display.drawDisc(x, y, 3);
+  if (diceValue >= 2) {
+    display.drawDisc(x - p, y - p, 3);
+    display.drawDisc(x + p, y + p, 3);
+  }
+  if (diceValue >= 4) {
+    display.drawDisc(x + p, y - p, 3);
+    display.drawDisc(x - p, y + p, 3);
+  }
+  if (diceValue == 6) {
+    display.drawDisc(x - p, y, 3);
+    display.drawDisc(x + p, y, 3);
+  }
+
+  display.setFont(u8g2_font_5x7_tf);
+  display.drawStr(0, 63, "A/C roll  B back");
+}
+
 void enterMode(Mode m) {
   if (mode == MODE_PET && m != MODE_PET) saveStats(true);
   mode = m;
+
   if (m == MODE_PET) {
     uint32_t now = millis();
     lastActivity = now;
     lastInteraction = now;
     overlay = OV_NONE;
   }
+  if (m == MODE_8BALL) eightBallIndex = random(EIGHT_BALL_COUNT);
+  if (m == MODE_DICE) diceValue = random(1, 7);
 }
 
 // ---------------- Arduino ----------------
@@ -774,13 +888,38 @@ void loop() {
 
   // Input handling.
   if (mode == MODE_MENU) {
-    if (a) menuIndex = (menuIndex + MENU_COUNT - 1) % MENU_COUNT;
-    if (c) menuIndex = (menuIndex + 1) % MENU_COUNT;
+    if (a) menuIndex = (menuIndex + ROOT_COUNT - 1) % ROOT_COUNT;
+    if (c) menuIndex = (menuIndex + 1) % ROOT_COUNT;
     if (b) {
       if (menuIndex == 0) enterMode(MODE_PET);
       else if (menuIndex == 1) enterMode(MODE_STATS);
-      else enterMode(MODE_MOTION);
+      else if (menuIndex == 2) enterMode(MODE_MOTION);
+      else if (menuIndex == 3) {
+        submenuIndex = 0;
+        enterMode(MODE_TOOLS);
+      } else if (menuIndex == 4) {
+        submenuIndex = 0;
+        enterMode(MODE_GAMES);
+      } else {
+        submenuIndex = 0;
+        enterMode(MODE_ONLINE);
+      }
     }
+  } else if (mode == MODE_TOOLS) {
+    if (a) submenuIndex = (submenuIndex + TOOLS_COUNT - 1) % TOOLS_COUNT;
+    if (c) submenuIndex = (submenuIndex + 1) % TOOLS_COUNT;
+    if (b) {
+      if (submenuIndex == 0) enterMode(MODE_TEMP);
+    }
+  } else if (mode == MODE_GAMES) {
+    if (a) submenuIndex = (submenuIndex + GAMES_COUNT - 1) % GAMES_COUNT;
+    if (c) submenuIndex = (submenuIndex + 1) % GAMES_COUNT;
+    if (b) {
+      if (submenuIndex == 0) enterMode(MODE_8BALL);
+      else enterMode(MODE_DICE);
+    }
+  } else if (mode == MODE_ONLINE) {
+    if (b) enterMode(MODE_MENU);
   } else if (mode == MODE_PET) {
     if (b) enterMode(MODE_MENU);
     if (a) {            // tickle
@@ -791,6 +930,12 @@ void loop() {
       trigger(OV_SURPRISED, 800);
       addHappy(1);
     }
+  } else if (mode == MODE_8BALL) {
+    if (a || c) eightBallIndex = random(EIGHT_BALL_COUNT);
+    if (b) enterMode(MODE_GAMES);
+  } else if (mode == MODE_DICE) {
+    if (a || c) diceValue = random(1, 7);
+    if (b) enterMode(MODE_GAMES);
   } else if (b) {
     enterMode(MODE_MENU);
   }
@@ -807,8 +952,20 @@ void loop() {
       drawPet(now);
     } else if (mode == MODE_STATS) {
       drawStats();
-    } else {
+    } else if (mode == MODE_MOTION) {
       drawMotion();
+    } else if (mode == MODE_TOOLS) {
+      drawToolsMenu();
+    } else if (mode == MODE_GAMES) {
+      drawGamesMenu();
+    } else if (mode == MODE_ONLINE) {
+      drawOnlineMenu();
+    } else if (mode == MODE_TEMP) {
+      drawTemperature();
+    } else if (mode == MODE_8BALL) {
+      draw8Ball();
+    } else {
+      drawDice();
     }
 
     display.sendBuffer();
