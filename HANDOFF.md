@@ -66,7 +66,7 @@ Salman confirms on the device.
 | Pet mode (moods, touch, shake, sleep), Stats, Motion test | DONE and TESTED (Salman: "looks good") |
 | I2C swap (OLED hw, MPU soft), touch on GPIO4 | DONE and TESTED |
 | Expanded root/Tools/Games/Online menus | DONE (monolithic implementation) |
-| Temperature, Magic 8-ball, Dice | DONE, needs Salman hardware confirmation |
+| Temperature, Magic 8-ball, Dice | DONE and TESTED (Salman confirmed) |
 | Games: Snake, Flappy, Tilt Maze, Dino Runner | DONE in code, needs Salman hardware confirmation |
 | Pomodoro + Stopwatch | TODO (batch 3) |
 | WiFi clock (NTP) + Weather (Open-Meteo), pet sleeps at night | TODO (batch 4) |
@@ -75,7 +75,7 @@ Salman confirms on the device.
 | Battery monitoring (GPIO3 divider), deep sleep + wake on touch | NOT STARTED, needs hardware first |
 
 ## Currently working on
-Touch Home control and mini-games were just added. Salman has confirmed the previous Batch 1 firmware worked on hardware. New mini-games and Home behavior still need hardware testing.
+Batch 1 (Temperature, Magic 8-ball, Dice) is confirmed working on hardware. Touch Home and Snake / Flappy / Tilt Maze / Dino Runner were just added and still need hardware testing. The host syntax check could not be run from this environment because GitHub network access was unavailable.
 
 ## Known caveats / things that will bite you
 - Keep the pet animation code unchanged unless Salman explicitly asks. Salman has confirmed the existing pet animations look good.
