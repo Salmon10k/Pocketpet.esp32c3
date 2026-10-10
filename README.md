@@ -34,7 +34,7 @@ The physical wiring did not change when the I2C roles were swapped. Only the dri
 ## Current firmware
 
 ### Menu
-Pet, Stats, Motion test.
+Pet, Stats, Motion test, Tools, Games, Online. Tools currently contains Temperature. Games contains Magic 8-ball and Dice. Online is a placeholder for the future WiFi features.
 
 ### Pet mode (companion style, nothing can die)
 - Eyes ease smoothly between moods, blink on their own, sometimes double-blink or wink, and wander around when idle.
@@ -84,10 +84,10 @@ When changing wiring, update `src/config.h` first.
 - [x] I2C roles swapped: OLED on hardware I2C, MPU6050 on SoftWire
 - [x] Improved pet mode: moods, eased eyes, touch petting, motion reactions, sleep, hearts, Zzz
 - [x] Stats screen with flash-saved happiness and energy
-- [ ] Verify the new firmware on hardware
+- [x] Verify current firmware on hardware
 - [ ] Try the RoboEyes library for the eyes (optional, only if the current look is not liked)
-- [ ] Temperature mode
-- [ ] Game mode
+- [x] Temperature mode
+- [x] Game mode (Magic 8-ball + Dice)
 - [ ] WiFi features (NTP clock, sleep at night)
 - [ ] Battery monitoring (GPIO3 divider)
 - [ ] Deep sleep / wake on touch
