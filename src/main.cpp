@@ -6,6 +6,12 @@
 #include <WiFi.h>
 #include <time.h>
 #include "config.h"
+#if __has_include("secrets.h")
+#include "secrets.h"
+#else
+#define WIFI_SSID ""
+#define WIFI_PASSWORD ""
+#endif
 
 // OLED: 1.3" SH1106 on hardware I2C (SDA = GPIO 8, SCL = GPIO 9).
 U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
