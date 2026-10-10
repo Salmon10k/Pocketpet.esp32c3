@@ -6,6 +6,7 @@
 #include <WiFi.h>
 #include <time.h>
 #include "config.h"
+#include "fluid.h"
 #if __has_include("secrets.h")
 #include "secrets.h"
 #else
@@ -524,6 +525,7 @@ void drawPet(uint32_t now) {
 enum Mode {
   MODE_MENU,
   MODE_PET,
+  MODE_FLUID,
   MODE_STATS,
   MODE_MOTION,
   MODE_TOOLS,
@@ -540,8 +542,8 @@ enum Mode {
 
 Mode mode = MODE_MENU;
 
-const char *rootItems[] = {"Pet", "Stats", "Motion test", "Tools", "Games", "Online"};
-const int ROOT_COUNT = 6;
+const char *rootItems[] = {"Pet", "Fluid", "Stats", "Motion test", "Tools", "Games", "Online"};
+const int ROOT_COUNT = 7;
 const char *toolsItems[] = {"Temperature"};
 const int TOOLS_COUNT = 1;
 const char *gamesItems[] = {"Magic 8-ball", "Dice", "Snake", "Flappy", "Tilt Maze", "Dino Runner"};
@@ -706,14 +708,115 @@ void drawFlappy() {
   }
 }
 
-// Tilt Maze: procedural perfect maze (DFS), 12 x 4 cells. Each cell stores N/E/S/W walls.
+// ---------------- Tilt helper (shared by Tilt Maze and Fluid) ----------------
+// Hold the device the way you normally hold a phone (tilted toward your face). The pose you are in
+// while calibrating is "level"; tilts are measured from there. The screen axes are worked out from
+// the gravity direction itself, so it does not matter how the MPU6050 is mounted on the board.
+uint32_t motionSeq = 0;          // incremented on every fresh MPU sample
+uint32_t tiltSeen = 0;
+struct TiltState {
+  bool calibrating;
+  uint8_t samples;
+  float sx, sy, sz;              // calibration sums
+  bool autoAxes;                 // false = held too flat to tell, fall back to TILT_X/Y_SIGN
+  float dX, dY, rX, rY;          // unit vectors (device frame): screen-down, screen-right
+  float down0;                   // in-plane gravity along screen-down in the neutral pose (sin of tilt)
+  float scale;                   // 1 / cos(neutral tilt): left/right and up/down tilt feel the same
+  float fx0, fy0;                // fallback neutral reading
+  float tx, ty;                  // smoothed relative tilt, angle-like, +x right, +y down
+  float gx, gy;                  // smoothed in-plane gravity, neutral pose = (0, 1)
+} tilt = {false, 0, 0, 0, 0, false, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1};
+
+void tiltBegin() {
+  tilt.calibrating = true;
+  tilt.samples = 0;
+  tilt.sx = tilt.sy = tilt.sz = 0;
+  tilt.tx = tilt.ty = 0;
+  tilt.gx = 0;
+  tilt.gy = 1;
+  tiltSeen = motionSeq;
+}
+
+void tiltUpdate() {
+  if (motionSeq == tiltSeen) return;   // wait for a fresh sample
+  tiltSeen = motionSeq;
+  if (!mpuOk) return;
+
+  if (tilt.calibrating) {
+    tilt.sx += motion.ax; tilt.sy += motion.ay; tilt.sz += motion.az;
+    if (++tilt.samples >= 25) {        // 0.5 s of readings
+      float mx = tilt.sx / tilt.samples, my = tilt.sy / tilt.samples, mz = tilt.sz / tilt.samples;
+      float inplane = sqrtf(mx * mx + my * my);
+      if (inplane >= 0.18f) {
+        tilt.autoAxes = true;
+        tilt.dX = -mx / inplane;       // gravity points toward the bottom of the screen
+        tilt.dY = -my / inplane;
+        if (mz >= 0) { tilt.rX = -tilt.dY; tilt.rY = tilt.dX; }   // screen faces the user
+        else         { tilt.rX = tilt.dY;  tilt.rY = -tilt.dX; }  // sensor mounted facing away
+        tilt.down0 = inplane;
+        tilt.scale = 1.0f / fmaxf(0.35f, sqrtf(fmaxf(0.0f, 1.0f - inplane * inplane)));
+      } else {
+        tilt.autoAxes = false;         // held nearly flat: use the fixed axis mapping from config.h
+        tilt.fx0 = mx; tilt.fy0 = my;
+        tilt.scale = 1.0f;
+        tilt.down0 = 0.6f;
+      }
+      tilt.calibrating = false;
+    }
+    return;
+  }
+
+  float rawx, rawy, rawgx, rawgy;
+  if (tilt.autoAxes) {
+    float gR = -(motion.ax * tilt.rX + motion.ay * tilt.rY);   // gravity toward screen-right
+    float gD = -(motion.ax * tilt.dX + motion.ay * tilt.dY);   // gravity toward screen-down
+    rawx = gR * tilt.scale;
+    rawy = (gD - tilt.down0) * tilt.scale;
+    float nd = fmaxf(tilt.down0, 0.25f);
+    rawgx = gR / nd;
+    rawgy = gD / nd;
+  } else {
+    rawx = TILT_X_SIGN * (motion.ay - tilt.fy0);
+    rawy = TILT_Y_SIGN * (motion.ax - tilt.fx0);
+    rawgx = rawx * 1.5f;
+    rawgy = 1.0f + rawy * 1.5f;
+  }
+  const float k = 0.4f;
+  tilt.tx += (constrain(rawx, -1.5f, 1.5f) - tilt.tx) * k;
+  tilt.ty += (constrain(rawy, -1.5f, 1.5f) - tilt.ty) * k;
+  tilt.gx += (constrain(rawgx, -2.0f, 2.0f) - tilt.gx) * k;
+  tilt.gy += (constrain(rawgy, -2.0f, 2.0f) - tilt.gy) * k;
+}
+
+// Small banner (black box, white text) drawn over whatever is on screen.
+void drawBanner(const char *text, int y) {
+  display.setFont(u8g2_font_6x10_tf);
+  int w = display.getStrWidth(text);
+  int x = (128 - w) / 2;
+  display.setDrawColor(0);
+  display.drawBox(x - 3, y - 9, w + 6, 12);
+  display.setDrawColor(1);
+  display.drawFrame(x - 3, y - 9, w + 6, 12);
+  display.drawStr(x, y, text);
+}
+
+// ---------------- Tilt Maze ----------------
+// Procedural perfect maze (DFS), 12 x 4 cells of 10 px. Walls are N/E/S/W bit flags per cell.
+// Physics runs on a fixed 20 ms step (independent of the main loop speed), the ball is a circle that
+// collides with every wall segment, and the neutral pose is calibrated on entry (A = re-zero).
 const int MAZE_COLS = 12, MAZE_ROWS = 4, MAZE_CELL = 10;
+const int MAZE_X0 = 4, MAZE_Y0 = 18;
 const uint8_t MW_N = 1, MW_E = 2, MW_S = 4, MW_W = 8;
+const float MAZE_R = 2.5f;            // ball radius
+const float MAZE_ACCEL = 420.0f;      // px/s^2 per unit of tilt
+const float MAZE_DRAG = 2.2f;         // 1/s
+const float MAZE_VMAX = 75.0f;        // px/s
 uint8_t mazeWalls[MAZE_ROWS][MAZE_COLS];
 bool mazeVisited[MAZE_ROWS][MAZE_COLS];
-float mazeX = 9, mazeY = 23;
-bool mazeWon = false;
-uint32_t mazeMoves = 0;
+float mazeX = 9.5f, mazeY = 23.5f, mazeVX = 0, mazeVY = 0;
+bool mazeWon = false, mazeStarted = false;
+uint32_t mazeStart = 0, mazeEnd = 0, mazeLast = 0;
+
 void generateMaze() {
   for (int r = 0; r < MAZE_ROWS; ++r)
     for (int c = 0; c < MAZE_COLS; ++c) { mazeWalls[r][c] = 15; mazeVisited[r][c] = false; }
@@ -735,49 +838,153 @@ void generateMaze() {
     ++top; stackC[top] = x; stackR[top] = y;
   }
 }
-void resetMaze() { generateMaze(); mazeX = 9; mazeY = 23; mazeWon = false; mazeMoves = 0; }
-bool mazeCanEnter(int col, int row, int ncol, int nrow) {
-  if (ncol < 0 || ncol >= MAZE_COLS || nrow < 0 || nrow >= MAZE_ROWS) return false;
-  if (ncol > col) return !(mazeWalls[row][col] & MW_E);
-  if (ncol < col) return !(mazeWalls[row][col] & MW_W);
-  if (nrow > row) return !(mazeWalls[row][col] & MW_S);
-  if (nrow < row) return !(mazeWalls[row][col] & MW_N);
-  return true;
+
+void resetMaze() {
+  generateMaze();
+  mazeX = MAZE_X0 + MAZE_CELL / 2.0f + 0.5f;
+  mazeY = MAZE_Y0 + MAZE_CELL / 2.0f + 0.5f;
+  mazeVX = mazeVY = 0;
+  mazeWon = false;
+  mazeStarted = false;
+  tiltBegin();
 }
-void mazeTick() {
-  if (mazeWon || !mpuOk) return;
-  float roll = atan2f(motion.ay, motion.az) * 57.29578f;
-  float pitch = atan2f(motion.ax, sqrtf(motion.ay*motion.ay + motion.az*motion.az)) * 57.29578f;
-  float vx = constrain(-roll * 0.055f, -1.25f, 1.25f);
-  float vy = constrain((pitch - 45.0f) * 0.055f, -1.25f, 1.25f);
-  float nx = constrain(mazeX + vx, 5.0f, 124.0f);
-  float ny = constrain(mazeY + vy, 17.0f, 60.0f);
-  int col = constrain((int)((mazeX - 4) / MAZE_CELL), 0, MAZE_COLS-1);
-  int row = constrain((int)((mazeY - 18) / MAZE_CELL), 0, MAZE_ROWS-1);
-  int ncol = constrain((int)((nx - 4) / MAZE_CELL), 0, MAZE_COLS-1);
-  int nrow = constrain((int)((ny - 18) / MAZE_CELL), 0, MAZE_ROWS-1);
-  if (ncol != col && !mazeCanEnter(col, row, ncol, row)) { nx = mazeX; ncol = col; }
-  if (nrow != row && !mazeCanEnter(col, row, col, nrow)) { ny = mazeY; nrow = row; }
-  mazeX = nx; mazeY = ny;
-  if (ncol != col || nrow != row) ++mazeMoves;
-  if (ncol == MAZE_COLS-1 && nrow == MAZE_ROWS-1) mazeWon = true;
-}
-void drawMaze() {
-  display.setFont(u8g2_font_5x7_tf);
-  char label[20]; snprintf(label, sizeof(label), "TILT MAZE  %lu", (unsigned long)mazeMoves);
-  display.drawStr(0, 7, label);
-  display.drawFrame(3, 17, 122, 42);
-  for (int r=0; r<MAZE_ROWS; ++r) for (int c=0; c<MAZE_COLS; ++c) {
-    int x=4+c*MAZE_CELL, y=18+r*MAZE_CELL; uint8_t w=mazeWalls[r][c];
-    if (w & MW_N) display.drawHLine(x, y, MAZE_CELL+1);
-    if (w & MW_W) display.drawVLine(x, y, MAZE_CELL+1);
-    if (c==MAZE_COLS-1 && (w & MW_E)) display.drawVLine(x+MAZE_CELL, y, MAZE_CELL+1);
-    if (r==MAZE_ROWS-1 && (w & MW_S)) display.drawHLine(x, y+MAZE_CELL, MAZE_CELL+1);
+
+// Push the ball out of one wall rectangle [x0,x1] x [y0,y1] (continuous pixel coordinates).
+void mazePushOut(float x0, float y0, float x1, float y1) {
+  float cx = constrain(mazeX, x0, x1), cy = constrain(mazeY, y0, y1);
+  float dx = mazeX - cx, dy = mazeY - cy;
+  float d2 = dx * dx + dy * dy;
+  if (d2 >= MAZE_R * MAZE_R) return;
+  float nx, ny, push;
+  if (d2 > 1e-6f) {
+    float d = sqrtf(d2);
+    nx = dx / d; ny = dy / d; push = MAZE_R - d;
+  } else {                                   // centre is inside the wall: leave by the shortest way
+    float l = mazeX - x0, r = x1 - mazeX, t = mazeY - y0, b = y1 - mazeY;
+    float m = fminf(fminf(l, r), fminf(t, b));
+    nx = ny = 0;
+    if (m == l) nx = -1; else if (m == r) nx = 1; else if (m == t) ny = -1; else ny = 1;
+    push = m + MAZE_R;
   }
-  display.drawFrame(109, 48, 9, 9);
-  display.drawDisc((int)mazeX, (int)mazeY, 2);
-  if (mazeWon) { display.drawBox(35, 27, 58, 15); display.setDrawColor(0); display.drawStr(43, 37, "MAZE CLEAR"); display.setDrawColor(1); }
+  mazeX += nx * push;
+  mazeY += ny * push;
+  float vn = mazeVX * nx + mazeVY * ny;      // remove the velocity going into the wall, with a little bounce
+  if (vn < 0) { mazeVX -= vn * nx * 1.15f; mazeVY -= vn * ny * 1.15f; }
 }
+
+void mazeCollide() {
+  int col = constrain((int)((mazeX - MAZE_X0) / MAZE_CELL), 0, MAZE_COLS - 1);
+  int row = constrain((int)((mazeY - MAZE_Y0) / MAZE_CELL), 0, MAZE_ROWS - 1);
+  for (int r = row - 1; r <= row + 1; ++r) {
+    for (int c = col - 1; c <= col + 1; ++c) {
+      if (r < 0 || r >= MAZE_ROWS || c < 0 || c >= MAZE_COLS) continue;
+      float x0 = MAZE_X0 + c * MAZE_CELL, y0 = MAZE_Y0 + r * MAZE_CELL;
+      uint8_t w = mazeWalls[r][c];
+      if (w & MW_N) mazePushOut(x0, y0, x0 + MAZE_CELL + 1, y0 + 1);
+      if (w & MW_W) mazePushOut(x0, y0, x0 + 1, y0 + MAZE_CELL + 1);
+      if (c == MAZE_COLS - 1 && (w & MW_E)) mazePushOut(x0 + MAZE_CELL, y0, x0 + MAZE_CELL + 1, y0 + MAZE_CELL + 1);
+      if (r == MAZE_ROWS - 1 && (w & MW_S)) mazePushOut(x0, y0 + MAZE_CELL, x0 + MAZE_CELL + 1, y0 + MAZE_CELL + 1);
+    }
+  }
+}
+
+float tiltDeadzone(float v) {
+  const float d = 0.04f;
+  if (v > d) return v - d;
+  if (v < -d) return v + d;
+  return 0;
+}
+
+void mazeStep(float dt) {
+  float ax = tiltDeadzone(constrain(tilt.tx, -0.7f, 0.7f)) * MAZE_ACCEL;
+  float ay = tiltDeadzone(constrain(tilt.ty, -0.7f, 0.7f)) * MAZE_ACCEL;
+  mazeVX += ax * dt;
+  mazeVY += ay * dt;
+  float drag = fmaxf(0.0f, 1.0f - MAZE_DRAG * dt);
+  mazeVX *= drag;
+  mazeVY *= drag;
+  mazeVX = constrain(mazeVX, -MAZE_VMAX, MAZE_VMAX);
+  mazeVY = constrain(mazeVY, -MAZE_VMAX, MAZE_VMAX);
+  for (int i = 0; i < 2; ++i) {              // two sub-steps keep fast balls from tunnelling through walls
+    mazeX += mazeVX * dt * 0.5f;
+    mazeY += mazeVY * dt * 0.5f;
+    mazeCollide();
+  }
+  mazeX = constrain(mazeX, MAZE_X0 + MAZE_R, MAZE_X0 + MAZE_COLS * MAZE_CELL - MAZE_R);
+  mazeY = constrain(mazeY, MAZE_Y0 + MAZE_R, MAZE_Y0 + MAZE_ROWS * MAZE_CELL - MAZE_R);
+}
+
+void mazeTick(uint32_t now) {
+  tiltUpdate();
+  if (tilt.calibrating || mazeWon || !mpuOk) { mazeLast = now; return; }
+  if (!mazeStarted) { mazeStarted = true; mazeStart = now; mazeLast = now; }
+  int steps = 0;
+  while (now - mazeLast >= 20 && steps < 3) { mazeStep(0.02f); mazeLast += 20; ++steps; }
+  if (now - mazeLast > 60) mazeLast = now;   // fell behind (slow frame): do not try to catch up
+  int col = (int)((mazeX - MAZE_X0) / MAZE_CELL), row = (int)((mazeY - MAZE_Y0) / MAZE_CELL);
+  if (col == MAZE_COLS - 1 && row == MAZE_ROWS - 1) { mazeWon = true; mazeEnd = now; }
+}
+
+void drawMaze(uint32_t now) {
+  display.setFont(u8g2_font_5x7_tf);
+  char label[28];
+  if (!mpuOk) {
+    display.drawStr(0, 7, "TILT MAZE");
+    drawBanner("MPU6050 not found", 36);
+    return;
+  }
+  uint32_t t = !mazeStarted ? 0 : (mazeWon ? mazeEnd : now) - mazeStart;
+  if (mazeWon) snprintf(label, sizeof(label), "CLEAR %lu.%lus  A/C new", (unsigned long)(t / 1000), (unsigned long)((t / 100) % 10));
+  else snprintf(label, sizeof(label), "TILT MAZE  %lu.%lus", (unsigned long)(t / 1000), (unsigned long)((t / 100) % 10));
+  display.drawStr(0, 7, label);
+
+  for (int r = 0; r < MAZE_ROWS; ++r) for (int c = 0; c < MAZE_COLS; ++c) {
+    int x = MAZE_X0 + c * MAZE_CELL, y = MAZE_Y0 + r * MAZE_CELL;
+    uint8_t w = mazeWalls[r][c];
+    if (w & MW_N) display.drawHLine(x, y, MAZE_CELL + 1);
+    if (w & MW_W) display.drawVLine(x, y, MAZE_CELL + 1);
+    if (c == MAZE_COLS - 1 && (w & MW_E)) display.drawVLine(x + MAZE_CELL, y, MAZE_CELL + 1);
+    if (r == MAZE_ROWS - 1 && (w & MW_S)) display.drawHLine(x, y + MAZE_CELL, MAZE_CELL + 1);
+  }
+  // Goal: a small hollow square in the bottom-right cell.
+  display.drawFrame(MAZE_X0 + (MAZE_COLS - 1) * MAZE_CELL + 3, MAZE_Y0 + (MAZE_ROWS - 1) * MAZE_CELL + 3, 5, 5);
+  display.drawDisc((int)mazeX, (int)mazeY, 2);
+
+  if (tilt.calibrating) {
+    drawBanner("Hold like a phone...", 38);
+    display.drawFrame(34, 43, 60, 5);
+    display.drawBox(35, 44, (int)(58.0f * tilt.samples / 25.0f), 3);
+  }
+}
+
+// ---------------- Fluid ----------------
+int fluidPreset = 0;
+uint32_t fluidLabelUntil = 0;
+
+void enterFluid() {
+  fluidPreset = 0;
+  fluid::init(fluidPreset);
+  tiltBegin();
+  fluidLabelUntil = 0;
+}
+
+void drawFluid(uint32_t now) {
+  if (!mpuOk) {
+    display.setFont(u8g2_font_6x10_tf);
+    drawBanner("MPU6050 not found", 36);
+    return;
+  }
+  // The gravity vector is already in screen space with the calibrated pose = straight down.
+  fluid::step((int32_t)(tilt.gx * 256.0f), (int32_t)(tilt.gy * 256.0f));
+  fluid::render(display.getBufferPtr());
+
+  if (tilt.calibrating) {
+    drawBanner("Hold like a phone...", 16);
+  } else if (now < fluidLabelUntil) {
+    drawBanner(fluid::presetName(fluidPreset), 16);
+  }
+}
+
 // Dino Runner: jump, crouch, mixed cactus clusters and low-flying birds.
 float dinoY = 49, dinoV = 0;
 int cactusX = 120, cactusH = 12, dinoObstacleType = 0;
@@ -826,7 +1033,8 @@ void drawDino() {
 void gameTick(uint32_t now) {
   if (mode == MODE_SNAKE) snakeTick(now);
   else if (mode == MODE_FLAPPY) flappyTick(now);
-  else if (mode == MODE_TILT_MAZE) mazeTick();
+  else if (mode == MODE_TILT_MAZE) mazeTick(now);
+  else if (mode == MODE_FLUID) tiltUpdate();
   else if (mode == MODE_DINO) dinoTick(now);
 }
 
@@ -989,6 +1197,7 @@ void enterMode(Mode m) {
   if (m == MODE_SNAKE) resetSnake();
   if (m == MODE_FLAPPY) resetFlappy();
   if (m == MODE_TILT_MAZE) resetMaze();
+  if (m == MODE_FLUID) enterFluid();
   if (m == MODE_DINO) resetDino();
 }
 
@@ -1071,7 +1280,8 @@ void loop() {
   if (a || b || c || touchDown) lastInteraction = lastActivity = now;
 
   // Touch pad doubles as a Home button outside Pet mode.
-  if (touchDown && mode != MODE_PET && mode != MODE_MENU) {
+  // (Not in Tilt Maze / Fluid: your grip on the back of the device would keep sending you home.)
+  if (touchDown && mode != MODE_PET && mode != MODE_MENU && mode != MODE_FLUID && mode != MODE_TILT_MAZE) {
     menuIndex = 0;
     enterMode(MODE_MENU);
   }
@@ -1102,6 +1312,7 @@ void loop() {
     lastSensor = now;
     if (mpuRead()) {
       mpuFails = 0;
+      motionSeq++;
 
       float amag = sqrtf(motion.ax * motion.ax + motion.ay * motion.ay + motion.az * motion.az);
       float dev = fabsf(amag - 1.0f);
@@ -1187,12 +1398,13 @@ void loop() {
     if (c) menuIndex = (menuIndex + 1) % ROOT_COUNT;
     if (b) {
       if (menuIndex == 0) enterMode(MODE_PET);
-      else if (menuIndex == 1) enterMode(MODE_STATS);
-      else if (menuIndex == 2) enterMode(MODE_MOTION);
-      else if (menuIndex == 3) {
+      else if (menuIndex == 1) enterMode(MODE_FLUID);
+      else if (menuIndex == 2) enterMode(MODE_STATS);
+      else if (menuIndex == 3) enterMode(MODE_MOTION);
+      else if (menuIndex == 4) {
         submenuIndex = 0;
         enterMode(MODE_TOOLS);
-      } else if (menuIndex == 4) {
+      } else if (menuIndex == 5) {
         submenuIndex = 0;
         enterMode(MODE_GAMES);
       } else {
@@ -1248,6 +1460,16 @@ void loop() {
     }
   } else if (mode == MODE_TILT_MAZE) {
     if (b) enterMode(MODE_GAMES);
+    else if (c || (a && mazeWon)) resetMaze();          // new maze
+    else if (a) tiltBegin();                             // re-zero: hold the way you like and press A
+  } else if (mode == MODE_FLUID) {
+    if (b) enterMode(MODE_MENU);
+    else if (a) tiltBegin();                             // re-zero the "level" pose
+    else if (c) {                                        // next fluid
+      fluidPreset = (fluidPreset + 1) % fluid::PRESET_COUNT;
+      fluid::setPreset(fluidPreset);
+      fluidLabelUntil = millis() + 1500;
+    }
   } else if (mode == MODE_DINO) {
     if (b) enterMode(MODE_GAMES);
     else if (gameOver && (a || c)) resetDino();
@@ -1289,8 +1511,10 @@ void loop() {
       drawSnake();
     } else if (mode == MODE_FLAPPY) {
       drawFlappy();
+    } else if (mode == MODE_FLUID) {
+      drawFluid(now);
     } else if (mode == MODE_TILT_MAZE) {
-      drawMaze();
+      drawMaze(now);
     } else {
       drawDino();
     }

@@ -24,7 +24,9 @@ GPIO 8/9 are strapping pins, GPIO 0-5 are the only deep-sleep wake pins on the C
 
 ## Source layout
 - `src/config.h`: pins, addresses, timing and tuning macros.
-- `src/main.cpp`: current firmware, hardware init, input handling, MPU, stats, pet animation/drawing, menus and mini-games.
+- `src/main.cpp`: current firmware, hardware init, input handling, MPU, stats, pet animation/drawing, menus and mini-games, shared tilt helper, Tilt Maze, Fluid glue.
+- `src/fluid.h` / `src/fluid.cpp`: fixed-point particle fluid (no Arduino deps, also compiled on PC by `tools/fluidtest/`).
+- `tools/fluidtest/`: host harness (`fluidtest.cpp` + `render.py` PNG contact sheets) for tuning the fluid without hardware.
 - `src/config.h`: hardware pins and tuning.
 - The firmware is currently monolithic in `main.cpp`; do not assume the planned screen-registry/multi-file architecture exists yet.
 - `README.md`: user-facing docs. Keep it in sync when behaviour changes.
@@ -49,7 +51,7 @@ Current implementation uses a `Mode` enum and dispatches input/drawing in `main.
 
 ## Testing (important)
 - In the agent sandbox PlatformIO cannot download the ESP32 toolchain, so NOTHING can be compiled for the
-  chip there. Run `tools/hostcheck/check.sh` instead: it syntax-checks every `src/*.cpp` against mock Arduino
+  chip there. Run `tools/hostcheck/check.sh` instead (it has mock WiFi.h too): it syntax-checks every `src/*.cpp` against mock Arduino
   headers plus the real U8g2 / SoftWire / ArduinoJson headers. Passing means "no typos / API mismatches",
   not "works on the board".
 - Salman builds with PlatformIO (check mark), flashes (arrow) and watches Serial Monitor at 115200.
@@ -68,6 +70,8 @@ Salman confirms on the device.
 | Expanded root/Tools/Games/Online menus | DONE (monolithic implementation) |
 | Temperature, Magic 8-ball, Dice | DONE and TESTED (Salman confirmed) |
 | Games: Snake, Flappy, procedural Tilt Maze, Dino Runner with crouch/obstacle variety | DONE in code, needs Salman hardware confirmation |
+| Fluid main mode (root menu item 2), 3 presets | DONE in code + host-checked + host-rendered; needs Salman hardware confirmation (FPS, tilt feel) |
+| Tilt Maze rewrite (fixed 20 ms physics, shared tilt helper) | DONE in code + host-checked; needs hardware confirmation |
 | Pomodoro + Stopwatch | TODO (batch 3) |
 | Wi-Fi NTP clock | DONE in code, needs local credentials and hardware confirmation |\n| Weather (Open-Meteo), pet sleeps at night | TODO |
 | Spirit level, Step counter | TODO (batch 5) |
@@ -75,7 +79,19 @@ Salman confirms on the device.
 | Battery monitoring (GPIO3 divider), deep sleep + wake on touch | NOT STARTED, needs hardware first |
 
 ## Currently working on
-Batch 1 (Temperature, Magic 8-ball, Dice) is confirmed working on hardware. Touch Home and Snake / Flappy / Tilt Maze / Dino Runner were added earlier and still need hardware testing. The Tilt Maze now generates a new solvable maze on entry, uses a 45-degree forward-pitch baseline and reversed left/right movement. Dino Runner now supports jump and crouch with cactus clusters and flying birds. Online now has an optional Wi-Fi NTP clock for Pakistan time; credentials are supplied via local ignored `src/secrets.h` (copy `src/secrets.example.h`), so Wi-Fi stays disabled until configured. The host syntax check has not been run for this batch.
+Fluid mode + Tilt Maze rewrite just landed (host syntax check passes, nothing flashed yet). Next: Salman tests them, then Pomodoro/Stopwatch, Weather, Spirit level, Step counter.
+
+### Tilt helper (main.cpp, `tiltBegin()` / `tiltUpdate()`)
+On entering Tilt Maze or Fluid it averages 25 MPU samples ("Hold like a phone..." banner) and derives screen-down/right axes from gravity itself, so it works for any MPU mounting. Neutral pose = however a phone is held. Maze uses relative tilt (`tilt.tx/ty`), Fluid uses normalised in-plane gravity (`tilt.gx/gy`, neutral = (0,1)). If the device is held nearly flat it falls back to `TILT_X_SIGN/TILT_Y_SIGN`. Button A in both modes re-zeroes.
+
+### Fluid (fluid.cpp)
+Clavet double-density relaxation, all Q8 integer maths (ESP32-C3 has no FPU, avoid floats). Neighbour grid, 3 presets (Water/Honey/Mercury; C cycles). Renders a metaball field straight into the U8g2 page buffer. Use `rz()` (round toward zero) for signed shifts, plain `>>` biases and made the surface slope. Tune with `N_PARTICLES` / `SUBSTEPS`; if FPS is low on the C3, lower those first. Host measured about 0.2 ms/frame, C3 cost is UNMEASURED.
+
+### Maze
+12x4 cells, fixed 20 ms physics step (was loop-rate dependent), circle-vs-wall-rect collision. B back, A re-zero, C (or A after winning) new maze.
+
+### Other behaviour notes
+Touch pad does NOT act as Home in Fluid / Tilt Maze (tilting would trigger it). Root menu order: Pet, Fluid, Stats, Motion test, Tools, Games, Online.
 
 ## Known caveats / things that will bite you
 - Keep the pet animation code unchanged unless Salman explicitly asks. Salman has confirmed the existing pet animations look good.
