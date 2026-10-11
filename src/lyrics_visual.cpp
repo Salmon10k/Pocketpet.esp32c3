@@ -1,11 +1,14 @@
 #include "lyrics_visual.h"
 #include "spotify.h"
 #include <string.h>
+#include <math.h>
 
 namespace lyrics_visual {
 namespace {
 
 int lastWordKey = -1;
+int lastScene = -1;
+uint32_t sceneSeed = 0;
 uint32_t transitionAt = 0;
 
 struct WordFrame {
@@ -58,85 +61,205 @@ WordFrame selectWord(const spotify::LyricsView &v) {
   return out;
 }
 
-void drawCorners(U8G2 &d, int x, int y, int w, int h, int len, int phase) {
-  int n = len + phase % 3;
-  d.drawHLine(x - 5, y - 5, n); d.drawVLine(x - 5, y - 5, n);
-  d.drawHLine(x + w - n + 5, y - 5, n); d.drawVLine(x + w + 4, y - 5, n);
-  d.drawHLine(x - 5, y + h + 4, n); d.drawVLine(x - 5, y + h - n + 5, n);
-  d.drawHLine(x + w - n + 5, y + h + 4, n); d.drawVLine(x + w + 4, y + h - n + 5, n);
-}
-
-void drawRings(U8G2 &d, uint32_t now, int phase) {
-  int pulse = (int)((now / 180) % 4);
-  d.drawCircle(64, 32, 13 + pulse, (phase & 1) ? U8G2_DRAW_UPPER_LEFT | U8G2_DRAW_LOWER_RIGHT : U8G2_DRAW_UPPER_RIGHT | U8G2_DRAW_LOWER_LEFT);
-  d.drawCircle(64, 32, 22, U8G2_DRAW_UPPER_LEFT | U8G2_DRAW_UPPER_RIGHT);
-  d.drawLine(15, 14 + (phase % 3), 29, 14 + (phase % 3));
-  d.drawLine(99, 49 - (phase % 3), 113, 49 - (phase % 3));
-  d.drawPixel(18, 48); d.drawPixel(109, 16);
-}
-
-void drawWave(U8G2 &d, uint32_t now, int phase) {
-  int shift = (int)((now / 130) % 5);
-  for (int i = 0; i < 13; ++i) {
-    int h = 2 + ((i * 3 + phase + shift) % 7);
-    int x = 8 + i * 9;
-    d.drawVLine(x, 51 - h, h);
-    if ((i + phase) % 3 == 0) d.drawPixel(x + 2, 51 - h - 2);
+// ---- tiny trig (256 steps per turn, results -127..127) so scenes do not need float math per frame
+int8_t sinTab[256];
+bool sinReady = false;
+inline int sn(int a) {
+  if (!sinReady) {
+    for (int i = 0; i < 256; i++) sinTab[i] = (int8_t)(sinf(i * 6.2831853f / 256.0f) * 127.0f);
+    sinReady = true;
   }
-  d.drawLine(8, 13, 24, 7 + (phase % 5));
-  d.drawLine(104, 7 + (phase % 5), 120, 13);
+  return sinTab[a & 255];
+}
+inline int cs(int a) { return sn(a + 64); }
+inline uint32_t rnd(uint32_t &s) { s = s * 1664525UL + 1013904223UL; return s >> 16; }
+
+// U8g2 coordinates are unsigned 8-bit, so a line with an end point off the screen is drawn wrongly.
+// This clips the line to the 128x64 screen first (Liang-Barsky) and only then draws it.
+void ln(U8G2 &d, int x0, int y0, int x1, int y1) {
+  float t0 = 0.0f, t1 = 1.0f;
+  float dx = (float)(x1 - x0), dy = (float)(y1 - y0);
+  const float p[4] = {-dx, dx, -dy, dy};
+  const float q[4] = {(float)x0, (float)(127 - x0), (float)y0, (float)(63 - y0)};
+  for (int i = 0; i < 4; i++) {
+    if (p[i] == 0.0f) { if (q[i] < 0.0f) return; continue; }
+    float r = q[i] / p[i];
+    if (p[i] < 0.0f) { if (r > t1) return; if (r > t0) t0 = r; }
+    else { if (r < t0) return; if (r < t1) t1 = r; }
+  }
+  d.drawLine((int)(x0 + t0 * dx + 0.5f), (int)(y0 + t0 * dy + 0.5f), (int)(x0 + t1 * dx + 0.5f), (int)(y0 + t1 * dy + 0.5f));
 }
 
-void drawBars(U8G2 &d, uint32_t now, int phase) {
-  int pulse = (int)((now / 100) % 6);
-  for (int side = 0; side < 2; ++side) {
-    int base = side ? 110 : 18;
-    for (int i = 0; i < 4; ++i) {
-      int h = 3 + ((i * 2 + phase + pulse) % 9);
-      int x = base + (side ? i * 3 : -i * 3);
-      d.drawVLine(x, 32 - h / 2, h);
+// ---- scenes (inspired by the reel): each one fills the screen behind the word box --------------------
+
+void sceneWaves(U8G2 &d, uint32_t now, uint32_t) {          // crossing sine waves with dotted centre lines
+  for (int w = 0; w < 3; w++) {
+    int amp = 6 + w * 3, yc = 32 + (w - 1) * 7;
+    int px = 0, py = yc;
+    for (int x = 0; x < 128; x += 2) {
+      int y = yc + sn(x * (3 + w) + (int)(now / (7 + w * 3))) * amp / 127;
+      if (x) ln(d, px, py, x, y);
+      px = x; py = y;
+    }
+    for (int x = (w * 3) % 6; x < 128; x += 6) d.drawPixel(x, yc);
+  }
+}
+
+void sceneRain(U8G2 &d, uint32_t now, uint32_t) {           // falling dashed streaks
+  for (int col = 0; col < 16; col++) {
+    int x = 4 + col * 8;
+    int speed = 45 + (col * 37) % 55;
+    int len = 8 + (col * 13) % 14;
+    int head = (int)((now * speed / 1000 + col * 29) % (uint32_t)(64 + len));
+    for (int i = 0; i < len; i += 2) {
+      int y = head - i;
+      if (y < 0 || y > 63) continue;
+      d.drawPixel(x, y);
+      if (i % 4 == 0) d.drawPixel(x + 1, y);
     }
   }
-  d.drawLine(13, 15, 28, 9);
-  d.drawLine(100, 9, 115, 15);
-  d.drawLine(13, 49, 28, 55);
-  d.drawLine(100, 55, 115, 49);
 }
 
-void drawScribble(U8G2 &d, int phase, uint32_t now) {
-  int wobble = (int)((now / 150) % 4);
-  d.drawLine(7, 25 + wobble, 18, 14);
-  d.drawLine(18, 14, 27, 19 + phase % 5);
-  d.drawLine(101, 18 + phase % 4, 111, 11 + wobble);
-  d.drawLine(111, 11 + wobble, 121, 24);
-  d.drawLine(8, 43, 18, 53 - wobble);
-  d.drawLine(18, 53 - wobble, 29, 47);
-  d.drawLine(99, 47, 111, 54 - wobble);
-  d.drawLine(111, 54 - wobble, 120, 42);
-  for (int i = 0; i < 5; ++i) {
-    int x = 38 + i * 13;
-    int y = (i & 1) ? 8 + phase % 3 : 55 - phase % 3;
-    d.drawPixel(x, y);
+void sceneSynth(U8G2 &d, uint32_t now, uint32_t) {          // sun, mountains and a scrolling perspective grid
+  const int hz = 48;
+  d.drawDisc(64, hz, 24, U8G2_DRAW_UPPER_LEFT | U8G2_DRAW_UPPER_RIGHT);
+  d.setDrawColor(0);
+  for (int k = 0; k < 4; k++) d.drawHLine(36, hz - 4 - k * 6 - (int)((now / 90) % 6) / 2, 56);
+  d.setDrawColor(1);
+  static const int8_t mx[] = {0, 10, 18, 27, 36};
+  static const int8_t my[] = {0, 11, 5, 14, 2};
+  for (int i = 0; i + 1 < 5; i++) {
+    ln(d, mx[i], hz - my[i], mx[i + 1], hz - my[i + 1]);
+    ln(d, 127 - mx[i], hz - my[i], 127 - mx[i + 1], hz - my[i + 1]);
+  }
+  d.drawHLine(0, hz, 128);
+  for (int i = -6; i <= 6; i++) ln(d, 64 + i * 2, hz, 64 + i * 24, 63);
+  for (int k = 0; k < 5; k++) {
+    int t = (int)((now / 45 + k * 20) % 100);
+    d.drawHLine(0, hz + 1 + (t * t / 100) * (63 - hz - 1) / 100, 128);
   }
 }
 
-void drawAmbient(U8G2 &d, uint32_t now) {
-  int p = (int)((now / 170) % 8);
-  drawRings(d, now, p);
-  for (int i = 0; i < 3; ++i) {
-    int rise = (p + i * 3) % 8;
-    d.drawDisc(54 + i * 10, 34 - rise / 2, 1);
+void sceneRadar(U8G2 &d, uint32_t now, uint32_t) {          // arcs, crosshair and an equalizer along the bottom
+  int pulse = (int)((now / 160) % 4);
+  d.drawCircle(64, 30, 27 + pulse, U8G2_DRAW_UPPER_LEFT | U8G2_DRAW_UPPER_RIGHT);
+  d.drawCircle(64, 30, 36 + pulse, U8G2_DRAW_UPPER_LEFT | U8G2_DRAW_UPPER_RIGHT);
+  d.drawHLine(2, 30, 26);
+  d.drawHLine(100, 30, 26);
+  d.drawVLine(64, 0, 8);
+  for (int i = 0; i < 25; i++) {
+    int v = sn(i * 23 + (int)(now / 6)) + sn(i * 11 - (int)(now / 9));
+    int h = 3 + (v + 254) * 11 / 508;
+    d.drawBox(2 + i * 5, 63 - h, 4, h);
   }
 }
 
-void drawWord(U8G2 &d, const char *word, uint32_t now, int phase) {
-  d.setFont(u8g2_font_7x13B_tf);
-  if (d.getStrWidth(word) > 96) d.setFont(u8g2_font_6x10_tf);
-  if (d.getStrWidth(word) > 104) d.setFont(u8g2_font_5x7_tf);
+void sceneVortex(U8G2 &d, uint32_t now, uint32_t) {         // swirling broken spiral arms
+  for (int arm = 0; arm < 8; arm++) {
+    int px = 64, py = 32;
+    for (int st = 0; st < 18; st++) {
+      int r = 5 + st * 3;
+      int a = arm * 32 + st * 9 + (int)(now / 12);
+      int x = 64 + cs(a) * r * 3 / 254;
+      int y = 32 + sn(a) * r * 3 / 330;
+      if (st % 4 != 3) ln(d, px, py, x, y);
+      px = x; py = y;
+    }
+  }
+}
 
+void scenePoly(U8G2 &d, uint32_t now, uint32_t seed) {      // spinning hexagram / square / scribble web
+  int a = (int)(now / 11);
+  int variant = (int)(seed % 3);
+  if (variant == 0) {
+    for (int t = 0; t < 2; t++) {
+      int vx[3], vy[3];
+      for (int k = 0; k < 3; k++) {
+        int ang = (t ? -a : a) + k * 85 + t * 43;
+        vx[k] = 64 + cs(ang) * 36 / 127;
+        vy[k] = 32 + sn(ang) * 29 / 127;
+      }
+      for (int k = 0; k < 3; k++) ln(d, vx[k], vy[k], vx[(k + 1) % 3], vy[(k + 1) % 3]);
+    }
+  } else if (variant == 1) {
+    for (int t = 0; t < 2; t++) {
+      int vx[4], vy[4], r = t ? 22 : 33;
+      for (int k = 0; k < 4; k++) {
+        int ang = (t ? -a : a) + k * 64;
+        vx[k] = 64 + cs(ang) * r * 3 / 254;
+        vy[k] = 32 + sn(ang) * r / 127;
+      }
+      for (int k = 0; k < 4; k++) ln(d, vx[k], vy[k], vx[(k + 1) % 4], vy[(k + 1) % 4]);
+    }
+  } else {
+    uint32_t s = seed * 7919U + (uint32_t)(now / 140) * 31U;       // a new tangle every ~140 ms
+    int px = 64 + (int)(rnd(s) % 60) - 30, py = (int)(rnd(s) % 64);
+    for (int i = 0; i < 9; i++) {
+      int x = 64 + (int)(rnd(s) % 120) - 60, y = (int)(rnd(s) % 64);
+      ln(d, px, py, x, y);
+      px = x; py = y;
+    }
+  }
+}
+
+void sceneTicks(U8G2 &d, uint32_t now, uint32_t seed) {     // calm: flickering chevrons and dashes
+  uint32_t s = seed * 104729U + (uint32_t)(now / 90) * 17U;
+  for (int i = 0; i < 7; i++) {
+    int x = (int)(rnd(s) % 120) + 4, y = (int)(rnd(s) % 56) + 4;
+    switch (rnd(s) % 3) {
+      case 0: ln(d, x - 3, y - 2, x, y); ln(d, x, y, x + 3, y - 2); break;
+      case 1: d.drawHLine(x - 3, y, 7); break;
+      default: d.drawPixel(x, y); d.drawPixel(x + 2, y + 1); break;
+    }
+  }
+}
+
+// The inverted "glitch" scene: white screen, cracks and a sliding XOR band; the box is drawn black on top.
+void sceneGlitch(U8G2 &d, uint32_t now, uint32_t seed) {
+  d.setDrawColor(1);
+  d.drawBox(0, 0, 128, 64);
+  d.setDrawColor(0);
+  uint32_t s = seed * 2654435761U;
+  for (int c = 0; c < 3; c++) {
+    int x = (int)(rnd(s) % 128), y = (int)(rnd(s) % 64);
+    for (int k = 0; k < 7; k++) {
+      int nx = x + (int)(rnd(s) % 19) - 9, ny = y + (int)(rnd(s) % 15) - 4;
+      ln(d, x, y, nx, ny);
+      x = nx; y = ny;
+    }
+  }
+  d.setDrawColor(2);
+  d.drawBox(0, (int)((now / 37 * 13) % 64), 128, 2 + (int)((now / 90) & 3));
+  d.setDrawColor(1);
+}
+
+const int SCENE_COUNT = 8;
+bool sceneInverted(int sc) { return sc == 7; }
+
+void drawScene(U8G2 &d, int sc, uint32_t now, uint32_t seed) {
+  switch (sc) {
+    case 0: sceneWaves(d, now, seed); break;
+    case 1: sceneRain(d, now, seed); break;
+    case 2: sceneSynth(d, now, seed); break;
+    case 3: sceneRadar(d, now, seed); break;
+    case 4: sceneVortex(d, now, seed); break;
+    case 5: scenePoly(d, now, seed); break;
+    case 6: sceneTicks(d, now, seed); break;
+    default: sceneGlitch(d, now, seed); break;
+  }
+}
+
+void drawAmbient(U8G2 &d, uint32_t now) {                    // no lyrics yet: just a slow synthwave horizon
+  sceneSynth(d, now / 2, 0);
+}
+
+void drawWord(U8G2 &d, const char *word, uint32_t now, int scene, uint32_t seed) {
   char fitted[28];
   strncpy(fitted, word, sizeof(fitted) - 1);
   fitted[sizeof(fitted) - 1] = 0;
+  d.setFont(u8g2_font_7x13B_tf);
+  if (d.getStrWidth(fitted) > 96) d.setFont(u8g2_font_6x10_tf);
+  if (d.getStrWidth(fitted) > 104) d.setFont(u8g2_font_5x7_tf);
   while (fitted[0] && d.getStrWidth(fitted) > 104) fitted[strlen(fitted) - 1] = 0;
 
   int textW = d.getStrWidth(fitted);
@@ -144,34 +267,37 @@ void drawWord(U8G2 &d, const char *word, uint32_t now, int phase) {
   if (boxW < 28) boxW = 28;
   if (boxW > 116) boxW = 116;
   const int boxH = 23;
+  uint32_t age = now - transitionAt;
   int x = (128 - boxW) / 2;
-  int y = 21 + ((now - transitionAt < 110) ? (int)(110 - (now - transitionAt)) / 22 : 0);
-  int textX = (128 - textW) / 2;
+  int y = 21 + (age < 110 ? (int)(110 - age) / 22 : 0);        // small drop-in when the word changes
   int baseline = y + 15;
+  bool inv = sceneInverted(scene);
 
-  // The box is the anchor. The surrounding drawing changes on each sung word.
-  d.drawFrame(x, y, boxW, boxH);
-  d.drawHLine(x + 4, y, 5 + (phase % 7));
-  d.drawHLine(x + boxW - 10, y + boxH - 1, 6 + (phase % 5));
-
-  switch (phase & 3) {
-    case 0: drawRings(d, now, phase); break;
-    case 1: drawWave(d, now, phase); break;
-    case 2: drawBars(d, now, phase); break;
-    default: drawScribble(d, phase, now); break;
+  drawScene(d, scene, now, seed);
+  if (inv) {
+    d.setDrawColor(1);                                         // keep the box itself clean white, the glitch stays outside it
+    d.drawBox(x, y, boxW, boxH);
+    d.setDrawColor(0);
+  } else {
+    d.setDrawColor(0);                                         // clear a hole so the scene never crosses the word
+    d.drawBox(x, y, boxW, boxH);
+    d.setDrawColor(1);
   }
-
-  d.setFont(u8g2_font_7x13B_tf);
-  if (d.getStrWidth(fitted) > 96) d.setFont(u8g2_font_6x10_tf);
-  if (d.getStrWidth(fitted) > 104) d.setFont(u8g2_font_5x7_tf);
-  d.drawStr(textX, baseline, fitted);
-  drawCorners(d, x, y, boxW, boxH, 7, phase);
+  d.drawFrame(x, y, boxW, boxH);
+  d.drawStr((128 - textW) / 2, baseline, fitted);
+  d.setDrawColor(1);
+  if (age < 90) {                                              // quick glitch flash on every new word
+    d.setDrawColor(2);
+    d.drawBox(0, (int)((seed * 13 + age * 7) % 60), 128, 2);
+    d.setDrawColor(1);
+  }
 }
 
 }  // namespace
 
 void enter() {
   lastWordKey = -1;
+  lastScene = -1;
   transitionAt = millis();
   spotify::enter();
 }
@@ -198,9 +324,13 @@ void draw(U8G2 &d, uint32_t now) {
   if (word.key != lastWordKey) {
     lastWordKey = word.key;
     transitionAt = now;
+    uint32_t h = (uint32_t)word.key * 2654435761U;
+    int sc = (int)((h >> 20) % SCENE_COUNT);
+    if (sc == lastScene) sc = (sc + 1) % SCENE_COUNT;           // never the same scene twice in a row
+    lastScene = sc;
+    sceneSeed = h >> 8;
   }
-  int phase = (word.key ^ (word.index * 13)) & 3;
-  drawWord(d, word.word, now, phase);
+  drawWord(d, word.word, now, lastScene < 0 ? 0 : lastScene, sceneSeed);
 }
 
 }  // namespace lyrics_visual

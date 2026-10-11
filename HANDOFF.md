@@ -229,3 +229,9 @@ Reaction test, Simon, Dino runner, Breakout, pet reacting to weather, morning gr
 - online.cpp: the last good network, channel and BSSID are kept in RAM. The next session tries exactly that first (`WiFi.begin(ssid, pass, channel, bssid)`, 4 s timeout, no scan) and falls back to the scan if it fails. Settle delay 600 -> 200 ms.
 - spotify.cpp: the access token is kept in RAM when leaving Spotify (valid ~1 h), so re-entering skips the login request; the pause before the first request is 150 ms instead of 700 ms.
 - Rollback: revert this commit.
+
+### Lyrics visual: reel-style scenes (2026-10-11; not yet hardware-validated)
+- `src/lyrics_visual.cpp` only. Each new word picks one of 8 scenes (never the same twice in a row), modelled on a reel Salman showed: crossing sine waves, falling dashed rain, synthwave sun + grid, radar arcs with equalizer, swirling vortex, spinning polygons / scribble web, calm flickering ticks, and an inverted "BLUE" glitch screen with cracks and an XOR band. The word sits in a framed box that drops in on change, with a short glitch flash. With no lyrics yet it shows a slow synthwave horizon.
+- Word selection, Spotify data, controls and the old Spotify screen are untouched.
+- U8g2 coordinates are unsigned 8-bit, so every scene line goes through `ln()`, which clips to the screen first. Do not call `drawLine` directly with off-screen points.
+- Rollback: revert this commit.
