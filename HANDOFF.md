@@ -202,7 +202,6 @@ Brightness (contrast 8/60/150/255), Screen auto-off (Off/30 s/1 min/5 min; wakes
 ## Ideas not yet approved
 Reaction test, Simon, Dino runner, Breakout, pet reacting to weather, morning greeting, deep sleep.
 
-<<<<<<< HEAD
 
 ### Separate Spotify lyrics visualizer (2026-10-11; first implementation, hardware review pending)
 
@@ -225,9 +224,8 @@ Reaction test, Simon, Dino runner, Breakout, pet reacting to weather, morning gr
 **Validation:** not yet PlatformIO-built or tested on the device. This was committed to the feature branch `feature/lyrics-visualizer`, not directly to `main`. Please build in PlatformIO, flash, open **Lyrics visual** while Spotify is playing, and check: loading/lyric gaps, short words, long words, rapid word changes, A/C track skip, short B play/pause, and hold B exit. Also visit the original Spotify mode and confirm it remains visually unchanged.
 
 **Rollback:** the feature branch started at `09e46003c05f1fab6c246a077956230148d06b3b` (the pre-feature main commit). To abandon the experiment without touching the stable mode, switch back to `main` or delete `feature/lyrics-visualizer`. The feature branch commits are `efa5168339b9e6f84d191a8a1919083c98d5ee3a`, `5c2c15c26d35bf0b4eec385f44bb5ecd4535bc18`, `917ca88cac4093ae46600b1b157fcb16cc0f79e5`, `244f9b04a900f07ea9aa628e17e6e0fa31dd142c`, `a4fb749123d22b591d32ab683e88e65f78d495e2`, and `fdfe2a42b0315bd2248612de67113339397f5b30`.
-=======
+
 ### Quick connect (2026-10-11; not yet hardware-validated)
 - online.cpp: the last good network, channel and BSSID are kept in RAM. The next session tries exactly that first (`WiFi.begin(ssid, pass, channel, bssid)`, 4 s timeout, no scan) and falls back to the scan if it fails. Settle delay 600 -> 200 ms.
 - spotify.cpp: the access token is kept in RAM when leaving Spotify (valid ~1 h), so re-entering skips the login request; the pause before the first request is 150 ms instead of 700 ms.
 - Rollback: revert this commit.
->>>>>>> 16f3452bae8ebe91a6ce6f1f38295a1ce4f3337c
