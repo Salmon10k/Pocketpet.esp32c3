@@ -160,7 +160,7 @@ int parseLrc(const char *lrc) {
 }
 
 // Word-wrap `s` into at most `maxLines` rows of `cols` characters. Returns rows written.
-int wrapText(const char *s, int cols, int maxLines, char out[][24]) {
+int wrapText(const char *s, int cols, int maxLines, char out[][26]) {
   int rows = 0;
   const char *p = s;
   while (*p == ' ') p++;
@@ -224,6 +224,9 @@ int curLine = -1;
 Cmd cmd = C_NONE;
 uint32_t cmdAt = 0;
 char note[32] = "";
+bool hinted = false;
+int drawnTarget = -2, oldTarget = -1;      // lyric line shown last frame / the one sliding out
+uint32_t tAt = 0, trackAt = 0;             // when the current line / the current track started to slide in
 uint32_t noteUntil = 0;
 
 void setNote(const char *m, uint32_t now) {
@@ -357,6 +360,9 @@ void applyTrack(const char *id, const char *t, const char *al, const char *ar, c
   lyr = L_WANT;
   lyrTries = 0;
   lyrAt = 0;
+  drawnTarget = -2;
+  oldTarget = -1;
+  trackAt = tAt = millis();
 }
 
 void poll(uint32_t now) {
@@ -411,6 +417,7 @@ void poll(uint32_t now) {
   uint32_t dur = it["duration_ms"] | 0;
   bool podcast = strcmp(doc["currently_playing_type"] | "track", "track") != 0;
   haveTrack = true;
+  if (!hinted) { hinted = true; setNote("A prev  B play  C next", t1); }
   if (strcmp(id, trackId) != 0 || (!id[0] && strcmp(name, title) != 0)) {
     applyTrack(id, name, al, ar, all, dur);
     if (podcast) lyr = L_MISSING;
@@ -509,6 +516,7 @@ void enter() {
   lyr = L_NONE;
   cmd = C_NONE;
   note[0] = 0;
+  hinted = false;
   blockedUntil = 0;
   nextPoll = 0;
   loginFails = 0;
@@ -605,13 +613,13 @@ void drawStatus(U8G2 &d, const char *l1, const char *l2, const char *l3) {
   if (l3) centered(d, 62, l3);
 }
 
-void drawMarquee(U8G2 &d, const char *s, int baseline, uint32_t now) {
+void drawMarquee(U8G2 &d, const char *s, int baseline, uint32_t now, int shift, int maxW) {
   int w = d.getStrWidth(s);
-  if (w <= 128) { d.drawStr(0, baseline, s); return; }
+  if (w <= maxW) { d.drawStr(shift, baseline, s); return; }
   int span = w + 24;
   int off = (int)((now / 45) % (uint32_t)span);
-  d.drawStr(-off, baseline, s);
-  d.drawStr(span - off, baseline, s);
+  d.drawStr(shift - off, baseline, s);
+  d.drawStr(shift + span - off, baseline, s);
 }
 
 void trimTo(U8G2 &d, const char *s, char *out, size_t cap, int maxW) {   // cut with "~" so it fits maxW pixels
@@ -623,13 +631,102 @@ void trimTo(U8G2 &d, const char *s, char *out, size_t cap, int maxW) {   // cut 
   if (n < cap - 1) { out[n] = '~'; out[n + 1] = 0; }
 }
 
+
+// ---- animation helpers
+int easeOut(uint32_t elapsed, uint32_t dur) {          // 0..1000, fast start and soft landing
+  if (elapsed >= dur) return 1000;
+  int32_t inv = 1000 - (int32_t)(elapsed * 1000UL / dur);
+  return 1000 - inv * inv * inv / 1000000;
+}
+
+// Equalizer in the top-right corner: bounces while playing, flat bars when paused.
+void drawEq(U8G2 &d, int x, uint32_t now, bool play) {
+  static const uint8_t ph[4] = {0, 5, 11, 3};
+  for (int i = 0; i < 4; i++) {
+    int h = 1;
+    if (play) {
+      int t = (int)((now / 75 + ph[i] * 7) % 16);
+      h = 1 + (t < 8 ? t : 15 - t) * 6 / 7;
+    }
+    d.drawBox(x + i * 3, 8 - h, 2, h);
+  }
+}
+
+void drawDots(U8G2 &d, uint32_t now, int xShift) {      // bouncing dots for instrumental parts
+  for (int i = 0; i < 3; i++) {
+    int t = (int)((now / 90 + i * 5) % 16);
+    int up = t < 8 ? t : 15 - t;
+    d.drawDisc(54 + i * 10 + xShift, 34 - up / 2, 2);
+  }
+}
+
+// One big lyric line, centered, wrapped to 2 rows. fMil = how far through the line we are (0..1000),
+// -1 = no focus effect (old line leaving, or plain title). The focused word is drawn inverted and a
+// bar under the text fills as the line is sung (word timing is estimated from the line length,
+// LRC files only carry line times).
+void drawBig(U8G2 &d, const char *text, int xShift, int fMil) {
+  int len = (int)strlen(text);
+  int tier = len <= 18 ? 0 : (len <= 40 ? 1 : 2);        // bold 7x13, normal 6x10, small 5x7 (up to 3 rows)
+  d.setFont(tier == 0 ? u8g2_font_7x13B_tf : (tier == 1 ? u8g2_font_6x10_tf : u8g2_font_5x7_tf));
+  const int fw = tier == 0 ? 7 : (tier == 1 ? 6 : 5);
+  const int cols = 128 / fw;                              // 18, 21 or 25 characters per row
+  const int asc = tier == 0 ? 10 : (tier == 1 ? 8 : 6);
+  const int bh = tier == 0 ? 13 : (tier == 1 ? 11 : 8);
+  const int maxRows = tier == 2 ? 3 : 2;
+  char row[3][26];
+  int n = wrapText(text, cols, maxRows, row);
+  int total = 0;
+  for (int r = 0; r < n; r++) total += (int)strlen(row[r]);
+  int sung = fMil < 0 ? -1 : (int)((int32_t)fMil * total / 1000);     // characters sung so far
+  int focusAt = sung < 0 ? -1 : (sung >= total ? total - 1 : sung);
+  int g = 0;
+  for (int r = 0; r < n; r++) {
+    int L = (int)strlen(row[r]);
+    int base = tier == 2 ? 23 + r * 11 : (n == 1 ? 34 : 27 + r * 13);
+    int x0 = (128 - L * fw) / 2 + xShift;
+    for (int i = 0; i < L;) {
+      if (row[r][i] == ' ') { i++; continue; }
+      int j = i;
+      while (j < L && row[r][j] != ' ') j++;
+      char w[26];
+      memcpy(w, row[r] + i, (size_t)(j - i));
+      w[j - i] = 0;
+      int x = x0 + i * fw;
+      bool focus = focusAt >= 0 && g + i <= focusAt && focusAt < g + j + 1;
+      if (focus) {
+        d.drawBox(x - 1, base - asc, (j - i) * fw + 2, bh);
+        d.setDrawColor(0);
+        d.drawStr(x, base, w);
+        d.setDrawColor(1);
+      } else {
+        d.drawStr(x, base, w);
+      }
+      i = j;
+    }
+    if (sung >= 0) {                                                  // progress bar: solid = sung, dotted = still to come
+      int filled = sung - g;
+      filled = filled < 0 ? 0 : (filled > L ? L : filled) * fw;
+      d.drawHLine(x0, base + 3, filled);
+      for (int x = x0 + filled; x < x0 + L * fw; x += 3) d.drawPixel(x, base + 3);
+    }
+    g += L;
+  }
+}
+
+void drawSmall(U8G2 &d, const char *s, int base, int xShift) {
+  char buf[40];
+  d.setFont(u8g2_font_5x7_tf);
+  trimTo(d, s, buf, sizeof(buf), 128);
+  d.drawStr((128 - d.getStrWidth(buf)) / 2 + xShift, base, buf);
+}
+
 }  // namespace
 
 void draw(U8G2 &d, uint32_t now) {
   drawnSince = true;
   d.setFontPosBaseline();
   if (phase == P_ERROR) {
-    char row[3][24];
+    char row[3][26];
     int n = wrapText(errMsg, 21, 3, row);
     d.setFont(u8g2_font_7x13B_tf);
     centered(d, 14, "SPOTIFY");
@@ -648,58 +745,87 @@ void draw(U8G2 &d, uint32_t now) {
     return;
   }
 
-  // header: title - artists, scrolling when it is too long
+  d.setFontMode(1);                                   // transparent text, needed for the inverted focus word
+  uint32_t pos = position(now);
+  bool noteOn = note[0] && (int32_t)(noteUntil - now) > 0;
+  int inTrack = 1000 - easeOut(now - trackAt, 380);   // 1000 -> 0: header and title slide in from the right
+  int trackShift = inTrack * 128 / 1000;
+
+  // top bar: "title - artists" (scrolls when long) and the equalizer
   char head[180];
   snprintf(head, sizeof(head), "%s - %s", dTitle, dArtists);
   d.setFont(u8g2_font_5x7_tf);
-  drawMarquee(d, head, 7, now);
+  d.setClipWindow(0, 0, 112, 9);
+  drawMarquee(d, head, 7, now, trackShift, 112);
+  d.setMaxClipWindow();
+  drawEq(d, 117, now, playing);
 
-  uint32_t pos = position(now);
   if (lyr == L_HAVE && lineCount > 0) {
     int target = -1;                                  // last line whose time has come
     int p = (int)pos + LYRIC_LEAD_MS;
     int i = curLine >= 0 && curLine < lineCount && (int)lines[curLine].ms <= p ? curLine : 0;
     for (; i < lineCount && (int)lines[i].ms <= p; i++) target = i;
     curLine = target;
-    char buf[40];
-    d.setFont(u8g2_font_5x7_tf);
-    if (target > 0 && pool[lines[target - 1].off]) { trimTo(d, pool + lines[target - 1].off, buf, sizeof(buf), 128); centered(d, 18, buf); }
-    d.setFont(u8g2_font_6x10_tf);
-    if (target < 0) {
-      centered(d, 36, "~ ~ ~");
-    } else if (!pool[lines[target].off]) {
-      centered(d, 36, "~ ~ ~");                       // instrumental gap
-    } else {
-      char row[2][24];
-      int n = wrapText(pool + lines[target].off, 21, 2, row);
-      int y0 = n == 1 ? 36 : 30;
-      for (int k = 0; k < n; k++) centered(d, y0 + k * 11, row[k]);
+    if (target != drawnTarget) {                      // new line: the old one slides out to the left
+      oldTarget = (drawnTarget >= 0 && drawnTarget < lineCount) ? drawnTarget : -1;
+      drawnTarget = target;
+      tAt = now;
     }
-    d.setFont(u8g2_font_5x7_tf);
-    if (target + 1 < lineCount && pool[lines[target + 1].off]) { trimTo(d, pool + lines[target + 1].off, buf, sizeof(buf), 128); centered(d, 52, buf); }
+    int e = easeOut(now - tAt, 320);
+    int inShift = (1000 - e) * 128 / 1000;            // new line: +128 -> 0 (from the right)
+    int outShift = -e * 128 / 1000;                   // old line: 0 -> -128
+    bool moving = e < 1000;
+
+    if (moving && oldTarget >= 0 && pool[lines[oldTarget].off]) drawBig(d, pool + lines[oldTarget].off, outShift, -1);
+    else if (moving && oldTarget >= 0) drawDots(d, now, outShift);
+
+    if (target < 0 || !pool[lines[target].off]) {
+      drawDots(d, now, inShift);                      // intro or instrumental gap
+    } else {
+      const char *txt = pool + lines[target].off;
+      uint32_t ls = lines[target].ms;
+      uint32_t span = target + 1 < lineCount ? lines[target + 1].ms - ls : 4000;
+      uint32_t dur = (uint32_t)strlen(txt) * 105 + 500;
+      if (dur > span * 9 / 10) dur = span * 9 / 10;
+      if (dur < 400) dur = 400;
+      int rel = p - (int)ls;
+      int f = rel <= 0 ? 0 : (rel >= (int)dur ? 1000 : (int)((int64_t)rel * 1000 / (int)dur));
+      drawBig(d, txt, inShift, f);
+    }
+    if (!noteOn && target >= 0 && strlen(pool + lines[target].off) <= 40 && target + 1 < lineCount && pool[lines[target + 1].off]) drawSmall(d, pool + lines[target + 1].off, 56, inShift);
   } else {
-    char row[2][24];
-    d.setFont(u8g2_font_6x10_tf);
-    int n = wrapText(dTitle, 21, 2, row);
-    for (int k = 0; k < n; k++) centered(d, 24 + k * 11, row[k]);
+    drawBig(d, dTitle, trackShift, -1);               // no synced lyrics: just the song, nicely centered
     d.setFont(u8g2_font_5x7_tf);
-    char ar[40];
-    trimTo(d, dArtists, ar, sizeof(ar), 128);
-    centered(d, 24 + n * 11 + 2, ar);
-    centered(d, 52, lyr == L_WANT ? "finding lyrics..." : (lyr == L_MISSING ? "no synced lyrics" : ""));
+    int n = (int)strlen(dTitle) <= 18 ? 1 : 2;
+    drawSmall(d, dArtists, n == 1 ? 50 : 56, trackShift);
+    if (lyr == L_WANT && !noteOn) {                   // "finding lyrics" with a little dot animation
+      char f[24];
+      snprintf(f, sizeof(f), "finding lyrics%.*s", (int)((now / 300) % 4), "...");
+      d.drawStr((128 - d.getStrWidth("finding lyrics...")) / 2, 60, f);
+    }
   }
 
-  // progress bar and the bottom row
-  if (durMs) d.drawBox(0, 55, (int)((uint64_t)pos * 128 / durMs), 2);
-  d.drawPixel(0, 56); d.drawPixel(127, 56);
+  // time and notes only appear after a button press; otherwise a single thin progress line
   d.setFont(u8g2_font_5x7_tf);
-  char t1[8], t2[8];
-  fmtTime(pos, t1);
-  fmtTime(durMs, t2);
-  d.drawStr(0, 63, t1);
-  d.drawStr(128 - d.getStrWidth(t2), 63, t2);
-  if (note[0] && (int32_t)(noteUntil - now) > 0) centered(d, 63, note);
-  else centered(d, 63, playing ? "A<<  B pause  C>>" : "A<<  B play   C>>");
+  if (noteOn) {
+    char t1[8], t2[8];
+    fmtTime(pos, t1);
+    fmtTime(durMs, t2);
+    d.setDrawColor(0);
+    d.drawBox(0, 51, 128, 12);
+    d.setDrawColor(1);
+    d.drawStr(0, 60, t1);
+    d.drawStr(128 - d.getStrWidth(t2), 60, t2);
+    char nb[32];
+    trimTo(d, note, nb, sizeof(nb), 84);
+    d.drawStr((128 - d.getStrWidth(nb)) / 2, 60, nb);
+  }
+  if (durMs) {
+    int w = (int)((uint64_t)pos * 128 / durMs);
+    d.drawHLine(0, 63, w);
+    d.drawPixel(w < 127 ? w + 1 : 127, 62);
+  }
+  d.setFontMode(0);
 }
 
 }  // namespace spotify
