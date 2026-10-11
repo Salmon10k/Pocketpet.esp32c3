@@ -7,3 +7,5 @@ void pinMode(uint8_t,uint8_t){} int digitalRead(uint8_t){return 0;} void digital
 void delay(unsigned long){} void delayMicroseconds(unsigned int){}
 long random(long m){return m?rand()%m:0;} long random(long a,long b){return a+random(b-a);} void randomSeed(unsigned long){}
 WiFiC WiFi;
+
+ESPClass ESP;

@@ -1127,6 +1127,8 @@ void tick(uint32_t now) {
 
   if (syncTotal > 0) {                      // sync finished
     if (syncGotData) treats++;              // one treat per sync
+    if (Serial) Serial.printf("online: sync done, heap free %lu KB (min %lu KB)\n",
+                              (unsigned long)(ESP.getFreeHeap() / 1024), (unsigned long)(ESP.getMinFreeHeap() / 1024));
     syncTotal = 0;
     syncGotData = false;
   }

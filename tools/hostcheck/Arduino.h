@@ -40,3 +40,6 @@ class Print { public: virtual size_t write(uint8_t)=0; virtual size_t write(cons
 class Stream : public Print {};
 struct SerialC : public Print { void begin(unsigned long){} operator bool() const {return true;} size_t write(uint8_t){return 1;} using Print::print; using Print::write; } ;
 extern SerialC Serial;
+
+struct ESPClass { uint32_t getSketchSize(){return 0;} uint32_t getFreeSketchSpace(){return 0;} uint32_t getFreeHeap(){return 0;} uint32_t getMinFreeHeap(){return 0;} };
+extern ESPClass ESP;

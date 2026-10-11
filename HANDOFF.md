@@ -48,7 +48,7 @@ Current implementation uses a `Mode` enum and dispatches input/drawing in `main.
 - No secrets in the repo (the repo is public). WiFi credentials and the user's coordinates live in
   `src/secrets.h`, which is gitignored; `src/secrets.example.h` is the template. Never commit `secrets.h`.
 - Commit messages in this repo end with the Co-Authored-By / session trailers the harness asks for.
-- Memory numbers (build of the first pet version): RAM 4.9%, flash 23.1% of the 1.3 MB app partition.
+- Memory numbers: the first pet version was RAM 4.9%, flash 23.1% of the default 1.3 MB app slot. After Online mode (Wi-Fi + TLS + ArduinoJson) Salman reported about 21% flash left, i.e. roughly 79% used of the 1.3 MB slot. So `platformio.ini` now uses `partitions.csv` (one 3 MB app slot, no OTA, nvs at the same address so saved stats survive). The first upload after that change rewrites the partition table. Serial prints one `flash: app ... heap free ...` line in the boot log and a heap line after each Online sync: ask Salman for those numbers before deciding to cut features.
 
 ## Testing (important)
 - In the agent sandbox PlatformIO cannot download the ESP32 toolchain, so NOTHING can be compiled for the

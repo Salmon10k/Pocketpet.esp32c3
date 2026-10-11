@@ -92,12 +92,14 @@ Happiness and energy are saved to flash (about every 2 minutes when they changed
 4. Build and upload with PlatformIO.
 5. Board environment: `esp32-c3-supermini`.
 6. USB CDC on boot is enabled in `platformio.ini`.
+7. `partitions.csv` gives the app a 3 MB slot (no OTA) because Wi-Fi + TLS made the firmware too big for the default 1.3 MB slot.
 
 ## Files
 - `src/main.cpp` -> main firmware and pet logic
 - `src/online.h` / `src/online.cpp` -> Online mode (Wi-Fi state machine, request cache, the 12 screens)
 - `src/config.h` -> all GPIO assignments, I2C addresses and pet tuning
 - `platformio.ini` -> PlatformIO build configuration
+- `partitions.csv` -> flash layout (one 3 MB app slot)
 
 When changing wiring, update `src/config.h` first.
 

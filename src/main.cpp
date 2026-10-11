@@ -1381,6 +1381,13 @@ void setup() {
   nextBlinkAt = now + 3000;
   nextWinkAt = now + 15000;
   lastActivity = lastInteraction = now;
+  {
+    char mem[96];
+    snprintf(mem, sizeof(mem), "flash: app %lu KB, free app space %lu KB; heap free %lu KB (min %lu KB)",
+             (unsigned long)(ESP.getSketchSize() / 1024), (unsigned long)(ESP.getFreeSketchSpace() / 1024),
+             (unsigned long)(ESP.getFreeHeap() / 1024), (unsigned long)(ESP.getMinFreeHeap() / 1024));
+    stamp(mem);
+  }
   stamp("setup done");
 }
 
