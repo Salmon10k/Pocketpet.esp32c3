@@ -1632,7 +1632,7 @@ void loop() {
         spHeld = false;
       }
     }
-    if (mode == MODE_SPOTIFY) spotify::input(a, bShort, c, now);
+    if (mode == MODE_SPOTIFY || mode == MODE_LYRICS_VISUAL) spotify::input(a, bShort, c, now);
   } else if (mode == MODE_PET) {
     if (b) enterMode(MODE_MENU);
     if (a) {            // tickle
