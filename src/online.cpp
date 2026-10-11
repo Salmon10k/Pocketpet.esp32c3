@@ -8,8 +8,11 @@
 #include <time.h>
 #if __has_include("secrets.h")
 #include "secrets.h"
-#else
+#endif
+#ifndef WIFI_SSID
 #define WIFI_SSID ""
+#endif
+#ifndef WIFI_PASSWORD
 #define WIFI_PASSWORD ""
 #endif
 
@@ -75,7 +78,7 @@ struct JobState {
 };
 JobState jobs[J_COUNT];
 
-enum WifiState : uint8_t { W_OFF, W_CONNECTING, W_BACKOFF, W_UP, W_FAIL };
+enum WifiState : uint8_t { W_OFF, W_SCAN, W_CONNECTING, W_BACKOFF, W_UP, W_FAIL };
 
 // ---------------------------------------------------------------- state
 bool viewing = false;          // false = list, true = a screen
@@ -88,7 +91,10 @@ uint32_t hintUntil = 0;
 // connected while you are in Online mode, switch the radio off when you leave.
 bool session = false;
 WifiState wst = W_OFF;
-int connectTry = 0;
+int attempt = 0, attemptTotal = CONNECT_TRIES;   // 1-based attempt counter shown as "wifi 2/3"
+uint8_t order[8];              // known networks to try, strongest signal first
+int orderLen = 0;
+uint32_t scanStart = 0;
 uint32_t connectStart = 0, backoffUntil = 0, settleUntil = 0, lastAuto = 0;
 uint16_t pending = 0;
 uint8_t tries[J_COUNT];        // attempts used by the request currently pending
@@ -100,7 +106,22 @@ uint32_t ntpStartedAt = 0;
 bool drawnSince = true;
 uint32_t gate = 0;
 int treats = 0;
-const bool netConfigured = (WIFI_SSID[0] != 0);
+
+// Known Wi-Fi networks. Either the single WIFI_SSID / WIFI_PASSWORD, or WIFI_NETWORKS in secrets.h:
+//   #define WIFI_NETWORKS { {"Home", "pass1"}, {"Uni", "pass2"}, {"MyPhone", "pass3"} }
+struct Net { const char *ssid; const char *pass; };
+#ifdef WIFI_NETWORKS
+const Net NETS[] = WIFI_NETWORKS;
+#else
+const Net NETS[] = {{WIFI_SSID, WIFI_PASSWORD}};
+#endif
+const int NETN = (int)(sizeof(NETS) / sizeof(NETS[0])) < 8 ? (int)(sizeof(NETS) / sizeof(NETS[0])) : 8;
+bool anyNet() {
+  for (int i = 0; i < NETN; i++)
+    if (NETS[i].ssid[0]) return true;
+  return false;
+}
+const bool netConfigured = anyNet();
 
 // ---------------------------------------------------------------- cached data
 char locCity[24] = "";
@@ -246,17 +267,60 @@ void radioOff() {
 }
 
 void startAttempt(uint32_t now) {
+  attempt++;
+  const Net &n = NETS[order[(attempt - 1) % orderLen]];
   WiFi.mode(WIFI_STA);
   WiFi.setTxPower(WIFI_TX_POWER);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.begin(n.ssid, n.pass);
   wst = W_CONNECTING;
   connectStart = now;
 }
 
-void beginSession(uint32_t now) {              // connect (with automatic retries)
+// Work out which known networks to try and in what order, from the scan result (n < 0 = scan failed).
+void buildOrder(int n) {
+  int8_t best[8];
+  bool used[8];
+  for (int k = 0; k < NETN; k++) { best[k] = -127; used[k] = false; }
+  for (int i = 0; i < n; i++) {
+    String ssid = WiFi.SSID(i);
+    int rssi = WiFi.RSSI(i);
+    for (int k = 0; k < NETN; k++)
+      if (NETS[k].ssid[0] && strcmp(ssid.c_str(), NETS[k].ssid) == 0 && rssi > best[k]) best[k] = (int8_t)rssi;
+  }
+  orderLen = 0;
+  for (;;) {                                         // strongest visible network first
+    int pick = -1;
+    for (int k = 0; k < NETN; k++)
+      if (!used[k] && best[k] > -127 && (pick < 0 || best[k] > best[pick])) pick = k;
+    if (pick < 0) break;
+    used[pick] = true;
+    order[orderLen++] = (uint8_t)pick;
+  }
+  if (orderLen == 0)                                 // nothing seen (scan failed, hidden SSID): try them all in config order
+    for (int k = 0; k < NETN; k++)
+      if (NETS[k].ssid[0]) order[orderLen++] = (uint8_t)k;
+  if (n >= 0) WiFi.scanDelete();
+  int total = orderLen * 2;                          // each network gets two goes
+  attemptTotal = total < CONNECT_TRIES ? CONNECT_TRIES : (total > 8 ? 8 : total);
+}
+
+void beginSession(uint32_t now) {              // pick a network and connect (with automatic retries)
   if (!netConfigured) return;
-  connectTry = 1;
-  startAttempt(now);
+  attempt = 0;
+  int valid = 0, only = 0;
+  for (int k = 0; k < NETN; k++)
+    if (NETS[k].ssid[0]) { valid++; only = k; }
+  if (valid == 1) {                            // one network: no scan needed
+    order[0] = (uint8_t)only;
+    orderLen = 1;
+    attemptTotal = CONNECT_TRIES;
+    startAttempt(now);
+    return;
+  }
+  WiFi.mode(WIFI_STA);
+  WiFi.scanNetworks(true);                     // async, polled in tick()
+  wst = W_SCAN;
+  scanStart = now;
 }
 
 void queueGate(uint32_t now) {      // let one frame ("Fetching...") reach the screen before a request blocks the loop
@@ -570,7 +634,8 @@ void autoRefresh(uint32_t now) {
 
 void sessionTag(char *b, size_t n) {
   if (!netConfigured) snprintf(b, n, "no setup");
-  else if (wst == W_CONNECTING || wst == W_BACKOFF) snprintf(b, n, "wifi %d/%d", connectTry, CONNECT_TRIES);
+  else if (wst == W_SCAN) snprintf(b, n, "scanning");
+  else if (wst == W_CONNECTING || wst == W_BACKOFF) snprintf(b, n, "wifi %d/%d", attempt, attemptTotal);
   else if (wst == W_FAIL) snprintf(b, n, "offline");
   else if (wst == W_UP && pending && syncTotal > 0) snprintf(b, n, "sync %d/%d", syncTotal - __builtin_popcount(pending), syncTotal);
   else if (wst == W_UP) snprintf(b, n, "online");
@@ -625,7 +690,7 @@ int primaryJob(int it) {
 
 bool busyFor(int it) {
   if (pending & itemJobs(it)) return true;
-  return itemNeedsTime(it) && needTime && !timeValid() && (wst == W_CONNECTING || wst == W_BACKOFF || wst == W_UP);
+  return itemNeedsTime(it) && needTime && !timeValid() && (wst == W_SCAN || wst == W_CONNECTING || wst == W_BACKOFF || wst == W_UP);
 }
 
 bool ready(int it) {
@@ -669,7 +734,8 @@ void drawStatus(U8G2 &d, int it, uint32_t now) {
   if (busyFor(it)) {
     char line[28];
     char what[20];
-    if (wst == W_CONNECTING || wst == W_BACKOFF) snprintf(what, sizeof(what), "Connecting %d/%d", connectTry, CONNECT_TRIES);
+    if (wst == W_SCAN) snprintf(what, sizeof(what), "Scanning Wi-Fi");
+    else if (wst == W_CONNECTING || wst == W_BACKOFF) snprintf(what, sizeof(what), "Connecting %d/%d", attempt, attemptTotal);
     else snprintf(what, sizeof(what), "%s", itemNeedsTime(it) ? "Syncing time" : "Fetching");
     snprintf(line, sizeof(line), "%s%.*s", what, (int)((now / 350) % 4), "...");
     d.drawStr(0, 36, line);
@@ -912,13 +978,16 @@ void drawMoon(U8G2 &d, uint32_t now) {
 }
 
 void drawNet(U8G2 &d, uint32_t now) {
-  char tag[8], b[28];
-  tagFor(IT_NET, now, tag, sizeof(tag));
+  (void)now;
+  char tag[12], b[28];
+  bool up = (wst == W_UP && WiFi.status() == WL_CONNECTED);
+  int rssi = up ? WiFi.RSSI() : 0;
+  if (up) snprintf(tag, sizeof(tag), "%d dBm", rssi);
+  else snprintf(tag, sizeof(tag), "offline");
   header(d, "NET", tag);
   d.setFont(u8g2_font_6x10_tf);
-  if (wst == W_UP && WiFi.status() == WL_CONNECTED) {
-    int rssi = WiFi.RSSI();
-    snprintf(b, sizeof(b), "Wi-Fi %d dBm", rssi);
+  if (up) {
+    snprintf(b, sizeof(b), "%.16s", WiFi.SSID().c_str());      // which of your networks it picked
     d.drawStr(0, 29, b);
     int bars = rssi > -60 ? 4 : rssi > -70 ? 3 : rssi > -80 ? 2 : 1;
     for (int i = 0; i < 4; i++) {
@@ -928,8 +997,8 @@ void drawNet(U8G2 &d, uint32_t now) {
     snprintf(b, sizeof(b), "IP %s", WiFi.localIP().toString().c_str());
     d.drawStr(0, 41, b);
   } else {
-    d.drawStr(0, 29, "Wi-Fi radio off");
-    d.drawStr(0, 41, "(it sleeps to save power)");
+    d.drawStr(0, 29, "Not connected");
+    d.drawStr(0, 41, "A = try again");
   }
   if (netOk) snprintf(b, sizeof(b), "Internet OK  %d ms", pingMs);
   else snprintf(b, sizeof(b), "Internet: NO");
@@ -1054,6 +1123,13 @@ bool input(bool a, bool b, bool c, uint32_t now) {
 
 void tick(uint32_t now) {
   if (!session) return;
+  if (wst == W_SCAN) {
+    int16_t n = WiFi.scanComplete();
+    if (n == WIFI_SCAN_RUNNING && now - scanStart < 8000) return;
+    buildOrder(n < 0 ? -1 : n);
+    startAttempt(now);
+    return;
+  }
   if (wst == W_BACKOFF) {
     if ((int32_t)(now - backoffUntil) >= 0) startAttempt(now);
     return;
@@ -1066,8 +1142,7 @@ void tick(uint32_t now) {
       startSntp(now);
     } else if (s == WL_CONNECT_FAILED || now - connectStart > CONNECT_TIMEOUT_MS) {
       WiFi.disconnect();
-      if (connectTry < CONNECT_TRIES) {                 // random connect failures: just try again
-        connectTry++;
+      if (attempt < attemptTotal) {                     // random connect failures: just try again (next network if several)
         wst = W_BACKOFF;
         backoffUntil = now + BACKOFF_MS;
       } else {

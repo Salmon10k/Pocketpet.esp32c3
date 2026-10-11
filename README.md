@@ -39,6 +39,8 @@ Pet, Fluid, Stats, Motion test, Tools, Games, Online, Settings (brightness, scre
 ### Online mode
 Wi-Fi stays **off** everywhere except Online mode. Entering Online connects **once** (up to 3 automatic attempts, then each request is retried up to 3 times for random network hiccups), fetches everything for every screen in one go, and stays connected while you browse. Leaving Online switches the radio off. The list header shows the state: `wifi 2/3`, `sync 4/9`, `online`, `offline`. Every screen shows how old its data is (top right). If a refresh fails you keep the last good data.
 
+**Several Wi-Fi networks:** list them in `secrets.h` with `WIFI_NETWORKS` (see `src/secrets.example.h`), for example home, uni and your phone hotspot. On entering Online it scans, tries the strongest known network first and falls back to the others by itself. Net status shows which one it picked. 2.4 GHz networks only.
+
 Controls: in the list, A/C move and B opens (**Sync now** refetches everything, **Back** leaves). On a screen, **A = refresh this screen** (no reconnect), **C = next screen**, **B = back to the list**, touch = Home.
 
 | Screen | Source (no API keys) | Refreshes |
