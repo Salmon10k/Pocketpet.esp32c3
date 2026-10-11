@@ -25,6 +25,8 @@ GPIO 8/9 are strapping pins, GPIO 0-5 are the only deep-sleep wake pins on the C
 ## Source layout
 - `src/config.h`: pins, addresses, timing and tuning macros.
 - `src/online.h` / `src/online.cpp`: the whole Online mode. Own state (Wi-Fi state machine, per-request cache, 12 screens). main.cpp only calls `online::enter/leave/tick/input/draw/drawPetBadge/takeTreats`. See "Online mode" below.
+- `src/spotify.h` / `src/spotify.cpp`: Spotify mode (MODE_SPOTIFY, root menu index 7). Borrows the radio from online.cpp through `online::wifiAcquire/wifiRelease/wifiUp/wifiStatusText`; online's tick drives the connection while `wifiHold` is set, but runs no jobs unless `session` (Online mode) is open.
+- `tools/spotify_auth.py`: PKCE login helper run on the PC, writes SPOTIFY_CLIENT_ID / SPOTIFY_REFRESH_TOKEN into secrets.h.
 - `src/main.cpp`: current firmware, hardware init, input handling, MPU, stats, pet animation/drawing, menus and mini-games, shared tilt helper, Tilt Maze, Fluid glue.
 - `src/fluid.h` / `src/fluid.cpp`: fixed-point particle fluid (no Arduino deps, also compiled on PC by `tools/fluidtest/`).
 - `tools/fluidtest/`: host harness (`fluidtest.cpp` + `render.py` PNG contact sheets) for tuning the fluid without hardware.
@@ -104,6 +106,22 @@ Online mode just landed (host syntax check passes, nothing compiled for the chip
 7. With Wi-Fi off or a wrong password: a screen should say "Couldn't load / No Wi-Fi", not freeze.
 8. Pet mode after fetching weather: no icon is normal unless it is 35 C+, rainy, AQI 150+ or night.
 9. Free heap / flash: check the PlatformIO memory summary after the build and tell the next agent.
+
+### Spotify mode (spotify.cpp)
+- Auth: refresh token (from secrets.h, rotated copy kept in NVS namespace `spotify`, ignored when secrets.h holds a different token) -> access token (1 h) refreshed quietly. 400/401 on refresh = "Login expired".
+- Polls `GET /v1/me/player/currently-playing` every 4 s (8 s paused), interpolates the progress between polls. Commands (play/pause/next/previous) are blocking requests run from tick() after one frame is drawn; the pause button flips the UI optimistically and undoes it on failure. 403 = no Premium, 404 = no active device.
+- Lyrics: LRCLIB `/api/get` (exact title+album+duration, then cleaned title without album). Parsed LRC lives in static arrays (160 lines, 7 KB pool), converted from UTF-8 to Latin-1 for the `_tf` fonts. Fetch happens once per track; network errors retry up to 3 times, 404 = "no synced lyrics".
+- One reused `WiFiClientSecure`; any non-200 answer closes the connection. Requests are refused below 55 KB free heap.
+- Loop task stack raised to 16 KB with `SET_LOOP_TASK_STACK_SIZE` (guarded by `#if defined`).
+- Host check covers syntax; the pure helpers (toLatin1, urlEncode, cleanTitle, parseLrc, wrapText) were tested on the PC by extracting them. NOT tested on hardware or against the live Spotify API: HTTPClient keep-alive, the 204 handling and the Content-Length: 0 on PUT/POST are the first things to check if something fails.
+
+### What Salman should test on the device (Spotify)
+1. Do the one-time setup in README ("Spotify mode"), build, flash.
+2. Menu > Spotify: `wifi` > `logging in` > now playing within a few seconds, with Spotify playing on his phone.
+3. B pauses and resumes, A/C change songs, the progress bar follows.
+4. Lyrics highlight the right line; compare timing with the Spotify app. Tell me if they are early/late (`LYRIC_LEAD_MS`).
+5. Free account or no device: should show "needs Premium" / "open Spotify on a device", not freeze.
+6. Send the serial log if a request fails (HTTP codes are not logged yet, add if needed).
 
 ### Tilt helper (main.cpp, `tiltBegin()` / `tiltUpdate()`)
 On entering Tilt Maze or Fluid it averages 25 MPU samples ("Hold like a phone..." banner) and derives screen-down/right axes from gravity itself, so it works for any MPU mounting. Neutral pose = however a phone is held. Maze uses relative tilt (`tilt.tx/ty`), Fluid uses normalised in-plane gravity (`tilt.gx/gy`, neutral = (0,1)). If the device is held nearly flat it falls back to `TILT_X_SIGN/TILT_Y_SIGN`. Button A in both modes re-zeroes.

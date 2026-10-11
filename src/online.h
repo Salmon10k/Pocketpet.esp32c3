@@ -20,6 +20,13 @@ void tick(uint32_t now);                               // call every loop(); run
 bool input(bool a, bool b, bool c, uint32_t now);      // returns true when the user chose Back
 void draw(U8G2 &d, uint32_t now);
 
+// Shared radio for other modes (Spotify). Online's own tick drives the connection state machine.
+bool wifiConfigured();
+void wifiAcquire(uint32_t now);                        // connect (no-op when already up / connecting)
+void wifiRelease();                                    // radio off unless Online mode is using it
+bool wifiUp();
+const char *wifiStatusText();                          // "connecting wifi", "no wifi", "online", ...
+
 // Pet integration (cached data only, never triggers a request).
 uint8_t petHint();                                     // bit mask of PetHint
 void drawPetBadge(U8G2 &d);                            // up to two tiny icons in the top-right corner

@@ -19,3 +19,7 @@
 // #define CURRENCY_HOME "PKR"         // second currency on the Currency screen
 // #define GITHUB_REPO "Salmon10k/Pocketpet.esp32c3"
 // #define WIFI_TX_POWER WIFI_POWER_11dBm   // default is 8.5 dBm (fixes flaky connects on many C3 Super Minis)
+
+// ---- Spotify mode (optional). Do not type these by hand: run  python tools/spotify_auth.py YOUR_CLIENT_ID --write
+// #define SPOTIFY_CLIENT_ID "..."
+// #define SPOTIFY_REFRESH_TOKEN "..."

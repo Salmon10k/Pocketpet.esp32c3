@@ -34,7 +34,7 @@ The physical wiring did not change when the I2C roles were swapped. Only the dri
 ## Current firmware
 
 ### Menu
-Pet, Fluid, Stats, Motion test, Tools, Games, Online, Settings (brightness, screen auto-off, flip screen, reset pet). Tools contains Temperature. Games contains Magic 8-ball, Dice, Snake, Flappy, procedurally generated Tilt Maze maps, and an upgraded Dino Runner with jumping, crouching, cactus clusters and flying birds. Online has 12 screens that need the internet (see below). Copy `src/secrets.example.h` to `src/secrets.h` and set `WIFI_SSID` / `WIFI_PASSWORD` locally first. Outside Pet mode, touching the pad returns to the main menu.
+Pet, Fluid, Stats, Motion test, Tools, Games, Online, Spotify, Settings (brightness, screen auto-off, flip screen, reset pet). Tools contains Temperature. Games contains Magic 8-ball, Dice, Snake, Flappy, procedurally generated Tilt Maze maps, and an upgraded Dino Runner with jumping, crouching, cactus clusters and flying birds. Online has 12 screens that need the internet (see below). Copy `src/secrets.example.h` to `src/secrets.h` and set `WIFI_SSID` / `WIFI_PASSWORD` locally first. Outside Pet mode, touching the pad returns to the main menu.
 
 ### Online mode
 Wi-Fi stays **off** everywhere except Online mode. Entering Online connects **once** (up to 3 automatic attempts, then each request is retried up to 3 times for random network hiccups), fetches everything for every screen in one go, and stays connected while you browse. Leaving Online switches the radio off. The list header shows the state: `wifi 2/3`, `sync 4/9`, `online`, `offline`. Every screen shows how old its data is (top right). If a refresh fails you keep the last good data.
@@ -65,6 +65,16 @@ Location for weather and air quality comes from an IP lookup (ip-api.com) unless
 Requests are blocking with a 7 second timeout, so the screen can pause briefly while one runs. A progress frame is drawn first so it never looks frozen. Background refresh while you are in Online: weather and air quality every 30 min, currency 6 h, GitHub 10 min. Net status and ISS only refresh while you are looking at them.
 
 **Connection problems:** many ESP32-C3 Super Mini boards fail to connect at full TX power, so the firmware lowers it to 8.5 dBm by default. If your router is far away and the signal is weak, put `#define WIFI_TX_POWER WIFI_POWER_11dBm` (or `WIFI_POWER_19_5dBm`) in `src/secrets.h`.
+
+### Spotify mode
+Shows what is playing on your Spotify (any device: phone, PC, speaker), with **synced lyrics** from LRCLIB, and controls it: **A** previous, **B** play/pause, **C** next. Touch pad = Home. The screen stays on while you are in this mode. Needs Spotify **Premium** for the buttons (viewing works without) and the Wi-Fi from `secrets.h`. Spotify itself must be playing somewhere; the keychain is a remote, not a speaker.
+
+One-time setup (on your PC):
+1. https://developer.spotify.com/dashboard -> Create app (any name, Web API). Add the Redirect URI exactly `http://127.0.0.1:8888/callback`. Copy the Client ID.
+2. `python tools/spotify_auth.py YOUR_CLIENT_ID --write` (opens a Spotify login page, then writes `SPOTIFY_CLIENT_ID` and `SPOTIFY_REFRESH_TOKEN` into `src/secrets.h`, which Git ignores).
+3. Build and flash. If it says the login expired (about every 6 months), run step 2 again.
+
+Notes: Spotify apps in development mode need the app owner to have Premium and allow 5 users, which is plenty for one keychain. The screen can freeze for about a second when a song changes (a new secure connection for the lyrics), that is normal. Not every song has synced lyrics; those show the title and artist instead.
 
 ### Fluid mode
 Particle water simulation that follows tilt. Hold the device like a phone, it calibrates for half a second (that pose counts as level). A = re-zero, C = Water / Honey / Mercury, B = back.
@@ -99,6 +109,8 @@ Happiness and energy are saved to flash (about every 2 minutes when they changed
 ## Files
 - `src/main.cpp` -> main firmware and pet logic
 - `src/online.h` / `src/online.cpp` -> Online mode (Wi-Fi state machine, request cache, the 12 screens)
+- `src/spotify.h` / `src/spotify.cpp` -> Spotify mode (token refresh, now playing, controls, LRCLIB lyrics)
+- `tools/spotify_auth.py` -> one-time Spotify login helper (PC)
 - `src/config.h` -> all GPIO assignments, I2C addresses and pet tuning
 - `platformio.ini` -> PlatformIO build configuration
 - `partitions.csv` -> flash layout (one 3 MB app slot)

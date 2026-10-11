@@ -10,5 +10,10 @@ class HTTPClient {
   void setUserAgent(const char *) {}
   int GET() { return 0; }
   String getString() { return String(); }
+  void setReuse(bool) {}
+  void addHeader(const String&, const String&) {}
+  int POST(String) { return 0; }
+  int sendRequest(const char*, String) { return 0; }
+  int getSize() { return 0; }
   void end() {}
 };

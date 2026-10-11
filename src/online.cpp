@@ -90,6 +90,7 @@ uint32_t hintUntil = 0;
 // One Wi-Fi session per visit to Online mode: connect once on entering, fetch everything, stay
 // connected while you are in Online mode, switch the radio off when you leave.
 bool session = false;
+bool wifiHold = false;          // another mode (Spotify) is using the radio
 WifiState wst = W_OFF;
 int attempt = 0, attemptTotal = CONNECT_TRIES;   // 1-based attempt counter shown as "wifi 2/3"
 uint8_t order[8];              // known networks to try, strongest signal first
@@ -1092,7 +1093,31 @@ void leave() {
   pending = 0;
   needTime = false;
   syncTotal = 0;
-  if (wst != W_OFF) radioOff();
+  if (wst != W_OFF && !wifiHold) radioOff();
+}
+
+bool wifiConfigured() { return netConfigured; }
+
+void wifiAcquire(uint32_t now) {            // another mode wants the radio: connect (retries and network choice as usual)
+  wifiHold = true;
+  if (netConfigured && (wst == W_OFF || wst == W_FAIL)) beginSession(now);
+}
+
+void wifiRelease() {
+  wifiHold = false;
+  if (!session && wst != W_OFF) radioOff();
+}
+
+bool wifiUp() { return wst == W_UP && WiFi.status() == WL_CONNECTED; }
+
+const char *wifiStatusText() {
+  switch (wst) {
+    case W_SCAN: return "scanning wifi";
+    case W_CONNECTING: case W_BACKOFF: return "connecting wifi";
+    case W_FAIL: return "no wifi";
+    case W_UP: return "online";
+    default: return netConfigured ? "wifi off" : "no wifi set";
+  }
 }
 
 bool input(bool a, bool b, bool c, uint32_t now) {
@@ -1122,7 +1147,7 @@ bool input(bool a, bool b, bool c, uint32_t now) {
 }
 
 void tick(uint32_t now) {
-  if (!session) return;
+  if (!session && !wifiHold) return;
   if (wst == W_SCAN) {
     int16_t n = WiFi.scanComplete();
     if (n == WIFI_SCAN_RUNNING && now - scanStart < 8000) return;
@@ -1159,6 +1184,7 @@ void tick(uint32_t now) {
     beginSession(now);
     return;
   }
+  if (!session) return;                                 // radio is only held for Spotify: no jobs
   if (needTime && timeValid() && now - ntpStartedAt > 1500) {
     needTime = false;
     ntpOkAt = now;

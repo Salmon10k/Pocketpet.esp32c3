@@ -1,0 +1,17 @@
+#pragma once
+// Spotify mode: now-playing, synced lyrics (LRCLIB) and playback buttons (needs Premium).
+// Login is done once on a PC with tools/spotify_auth.py, which puts SPOTIFY_CLIENT_ID and
+// SPOTIFY_REFRESH_TOKEN into src/secrets.h. All state lives in spotify.cpp.
+#include <Arduino.h>
+#include <U8g2lib.h>
+
+namespace spotify {
+
+void enter();                                      // entering Spotify mode: asks Online for the radio
+void leave();                                      // leaving: radio released, state dropped
+void tick(uint32_t now);                           // call every loop(); at most one request per call
+void input(bool a, bool b, bool c, uint32_t now);  // A previous, B play/pause, C next
+void draw(U8G2 &d, uint32_t now);
+bool active();                                     // true while the mode is open (keeps the screen on)
+
+}  // namespace spotify

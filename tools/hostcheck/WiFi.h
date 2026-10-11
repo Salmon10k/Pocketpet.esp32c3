@@ -22,5 +22,5 @@ struct WiFiC {
   IPAddress localIP() { return IPAddress(); }
 };
 extern WiFiC WiFi;
-class WiFiClient { public: virtual ~WiFiClient() {} };
+class WiFiClient { public: virtual ~WiFiClient() {} void stop() {} };
 inline void configTime(long, int, const char *, const char * = nullptr, const char * = nullptr) {}
