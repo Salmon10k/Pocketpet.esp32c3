@@ -37,30 +37,32 @@ The physical wiring did not change when the I2C roles were swapped. Only the dri
 Pet, Fluid, Stats, Motion test, Tools, Games, Online, Settings (brightness, screen auto-off, flip screen, reset pet). Tools contains Temperature. Games contains Magic 8-ball, Dice, Snake, Flappy, procedurally generated Tilt Maze maps, and an upgraded Dino Runner with jumping, crouching, cactus clusters and flying birds. Online has 12 screens that need the internet (see below). Copy `src/secrets.example.h` to `src/secrets.h` and set `WIFI_SSID` / `WIFI_PASSWORD` locally first. Outside Pet mode, touching the pad returns to the main menu.
 
 ### Online mode
-Wi-Fi stays **off** until a screen needs it. The radio connects, fetches, caches the result in RAM, and switches itself off about 6 seconds later. Every screen shows how old its data is (top right). If a refresh fails you keep the last good data.
+Wi-Fi stays **off** everywhere except Online mode. Entering Online connects **once** (up to 3 automatic attempts, then each request is retried up to 3 times for random network hiccups), fetches everything for every screen in one go, and stays connected while you browse. Leaving Online switches the radio off. The list header shows the state: `wifi 2/3`, `sync 4/9`, `online`, `offline`. Every screen shows how old its data is (top right). If a refresh fails you keep the last good data.
 
-Controls: in the list, A/C move and B opens. On a screen, **A = refresh**, **C = next screen**, **B = back to the list**, touch = Home.
+Controls: in the list, A/C move and B opens (**Sync now** refetches everything, **Back** leaves). On a screen, **A = refresh this screen** (no reconnect), **C = next screen**, **B = back to the list**, touch = Home.
 
 | Screen | Source (no API keys) | Refreshes |
 |--------|----------------------|-----------|
-| Clock | NTP (`pool.ntp.org`), keeps ticking offline | on open if never synced, resync every 6 h |
+| Clock | NTP (`pool.ntp.org`), keeps ticking offline | synced on connect, resync every 6 h |
 | Weather | Open-Meteo | 30 min |
 | Forecast | same request as Weather | 30 min |
 | Air quality | Open-Meteo air quality (US AQI, PM2.5) | 30 min |
 | Currency | open.er-api.com (USD to `CURRENCY_HOME`, EUR, GBP) | 6 h |
 | World clocks | computed from NTP time, with DST rules for London, New York, Tokyo, Sydney | no request |
-| Random fact | uselessfacts.jsph.pl | A only |
-| Advice | adviceslip.com | A only |
+| Random fact | uselessfacts.jsph.pl | once per visit, A = new one |
+| Advice | adviceslip.com | once per visit, A = new one |
 | Moon phase | calculated from the date (approximate, within about a day) | no request |
-| Net status | RSSI, IP, a `generate_204` check with ping time | every open |
-| ISS tracker | api.open-notify.org (plain HTTP) | 1 min |
+| Net status | RSSI, IP, a `generate_204` check with ping time | every 20 s while open |
+| ISS tracker | api.open-notify.org (plain HTTP) | every 60 s while open |
 | GitHub | api.github.com stars, forks, issues, last push | 10 min |
 
 Location for weather and air quality comes from an IP lookup (ip-api.com) unless you set `LOCATION_LAT` / `LOCATION_LON` in `secrets.h`. See `src/secrets.example.h` for all optional overrides.
 
 **Pet reactions:** when cached data exists, Pet mode shows tiny corner icons: sweat drop (35 C or hotter), umbrella (rain chance 60% or more), cloud (AQI 150 or more), moon (after sunset). Each successful fetch also gives the pet a small happiness bump.
 
-Requests are blocking with a 5 second timeout, so the screen can pause briefly while one runs. A "Fetching..." frame is drawn first so it never looks frozen.
+Requests are blocking with a 7 second timeout, so the screen can pause briefly while one runs. A progress frame is drawn first so it never looks frozen. Background refresh while you are in Online: weather and air quality every 30 min, currency 6 h, GitHub 10 min. Net status and ISS only refresh while you are looking at them.
+
+**Connection problems:** many ESP32-C3 Super Mini boards fail to connect at full TX power, so the firmware lowers it to 8.5 dBm by default. If your router is far away and the signal is weak, put `#define WIFI_TX_POWER WIFI_POWER_11dBm` (or `WIFI_POWER_19_5dBm`) in `src/secrets.h`.
 
 ### Fluid mode
 Particle water simulation that follows tilt. Hold the device like a phone, it calibrates for half a second (that pose counts as level). A = re-zero, C = Water / Honey / Mercury, B = back.

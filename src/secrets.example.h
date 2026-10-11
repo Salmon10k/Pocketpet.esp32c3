@@ -12,3 +12,4 @@
 // #define LOCAL_TZ "PKT-5"            // POSIX TZ string. Note the sign: UTC+5 is written "-5".
 // #define CURRENCY_HOME "PKR"         // second currency on the Currency screen
 // #define GITHUB_REPO "Salmon10k/Pocketpet.esp32c3"
+// #define WIFI_TX_POWER WIFI_POWER_11dBm   // default is 8.5 dBm (fixes flaky connects on many C3 Super Minis)

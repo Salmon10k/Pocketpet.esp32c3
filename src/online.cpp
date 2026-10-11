@@ -29,9 +29,12 @@ namespace online {
 namespace {
 
 // ---------------------------------------------------------------- tuning
-const uint32_t CONNECT_TIMEOUT_MS = 15000;
-const uint32_t HTTP_TIMEOUT_MS    = 5000;
-const uint32_t RADIO_IDLE_MS      = 6000;      // radio stays up this long after the last request
+const uint32_t CONNECT_TIMEOUT_MS = 10000;     // per attempt
+const int      CONNECT_TRIES      = 3;         // random "can't connect" is common on C3 boards: retry by itself
+const uint32_t BACKOFF_MS         = 1000;      // pause between connect attempts
+const uint32_t SETTLE_MS          = 600;       // let DHCP/DNS settle before the first request
+const uint32_t HTTP_TIMEOUT_MS    = 7000;
+const int      JOB_TRIES          = 3;         // a request that fails for a network reason is retried
 const uint32_t NTP_RESYNC_MS      = 6UL * 3600UL * 1000UL;
 const uint32_t NEVER              = 0xFFFFFFFFUL;
 
@@ -44,7 +47,7 @@ const char *const ITEM_NAMES[IT_COUNT] = {
   "Clock", "Weather", "Forecast", "Air quality", "Currency", "World clocks",
   "Random fact", "Advice", "Moon phase", "Net status", "ISS tracker", "GitHub"
 };
-const int LIST_COUNT = IT_COUNT + 1;           // + "Back"
+const int LIST_COUNT = IT_COUNT + 2;           // + "Sync now" + "Back"
 
 enum Job : uint8_t { J_GEO, J_WEATHER, J_AQI, J_CUR, J_FACT, J_ADVICE, J_NET, J_ISS, J_CREW, J_GITHUB, J_COUNT };
 inline uint16_t jbit(int j) { return (uint16_t)(1u << j); }
@@ -65,13 +68,14 @@ const uint32_t JOB_EVERY[J_COUNT] = {
 
 struct JobState {
   uint32_t at;     // millis() of last success
+  uint32_t failAt; // millis() of last final failure (background refresh waits a minute before trying again)
   bool has;
   uint8_t err;     // 0 ok, 1 no Wi-Fi, 2 HTTP error, 3 bad reply, 4 no location
   int16_t http;
 };
 JobState jobs[J_COUNT];
 
-enum WifiState : uint8_t { W_OFF, W_CONNECTING, W_UP, W_FAIL };
+enum WifiState : uint8_t { W_OFF, W_CONNECTING, W_BACKOFF, W_UP, W_FAIL };
 
 // ---------------------------------------------------------------- state
 bool viewing = false;          // false = list, true = a screen
@@ -80,9 +84,16 @@ int cur = IT_CLOCK;
 uint32_t openedAt = 0;
 uint32_t hintUntil = 0;
 
+// One Wi-Fi session per visit to Online mode: connect once on entering, fetch everything, stay
+// connected while you are in Online mode, switch the radio off when you leave.
+bool session = false;
 WifiState wst = W_OFF;
-uint32_t connectStart = 0, connectedAt = 0, lastNetUse = 0;
+int connectTry = 0;
+uint32_t connectStart = 0, backoffUntil = 0, settleUntil = 0, lastAuto = 0;
 uint16_t pending = 0;
+uint8_t tries[J_COUNT];        // attempts used by the request currently pending
+int syncTotal = 0;             // jobs queued by the current "sync everything" (0 = none running)
+bool syncGotData = false;
 bool needTime = false;         // a clock-type screen is waiting for NTP
 bool ntpStarted = false, ntpForce = false;
 uint32_t ntpStartedAt = 0;
@@ -222,18 +233,30 @@ void setWrapped(Wrapped &w, const char *src) {
 void copyStr(char *dst, size_t cap, const char *src) { snprintf(dst, cap, "%s", src); }
 
 // ---------------------------------------------------------------- Wi-Fi
+#ifndef WIFI_TX_POWER
+// Many ESP32-C3 Super Mini boards fail to connect at full power (antenna layout). Lower power is the
+// well-known fix. If your router is far away and the signal is weak, try WIFI_POWER_11dBm or WIFI_POWER_19_5dBm.
+#define WIFI_TX_POWER WIFI_POWER_8_5dBm
+#endif
+
 void radioOff() {
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
   wst = W_OFF;
 }
 
-void startConnect(uint32_t now) {
-  if (!netConfigured) return;
+void startAttempt(uint32_t now) {
   WiFi.mode(WIFI_STA);
+  WiFi.setTxPower(WIFI_TX_POWER);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   wst = W_CONNECTING;
   connectStart = now;
+}
+
+void beginSession(uint32_t now) {              // connect (with automatic retries)
+  if (!netConfigured) return;
+  connectTry = 1;
+  startAttempt(now);
 }
 
 void queueGate(uint32_t now) {      // let one frame ("Fetching...") reach the screen before a request blocks the loop
@@ -241,15 +264,11 @@ void queueGate(uint32_t now) {      // let one frame ("Fetching...") reach the s
   gate = now + 400;
 }
 
-void ensureNet(uint32_t now) {
-  if (!netConfigured) return;
-  if (wst == W_OFF || wst == W_FAIL) startConnect(now);
-}
-
 void failPending(uint8_t err) {
   for (int j = 0; j < J_COUNT; j++)
     if (pending & jbit(j)) jobs[j].err = err;
   pending = 0;
+  syncTotal = 0;
   needTime = false;
 }
 
@@ -498,7 +517,7 @@ void requestFresh(int it, bool force, uint32_t now) {
     if (!(mask & jbit(j)) || (pending & jbit(j))) continue;
     bool want = !jobs[j].has || (JOB_EVERY[j] != NEVER && now - jobs[j].at >= JOB_EVERY[j]);
     if (force) want = !(jobs[j].has && now - jobs[j].at < 1500);        // A refreshes, but ignore button mashing
-    if (want) { pending |= jbit(j); jobs[j].err = 0; any = true; }
+    if (want) { pending |= jbit(j); jobs[j].err = 0; tries[j] = 0; any = true; }
   }
   if (itemNeedsTime(it) && (!timeValid() || force)) {
     needTime = true;
@@ -510,12 +529,52 @@ void requestFresh(int it, bool force, uint32_t now) {
     if (!netConfigured) {
       pending = 0;
       needTime = false;
+    } else if (wst == W_OFF || wst == W_FAIL) {
+      beginSession(now);                         // the session was lost: reconnect (with retries)
     } else if (wst == W_UP && ntpForce) {
       startSntp(now);
-    } else {
-      ensureNet(now);
     }
   }
+}
+
+// Everything every screen needs, in one go, over the one connection.
+// force = "Sync now": refetch everything (random fact / advice are only fetched when empty).
+void queueSync(uint32_t now, bool force) {
+  pending = 0;
+  for (int j = 0; j < J_COUNT; j++) {
+    if (j == J_GEO) continue;                     // pulled in automatically before weather / air quality
+    bool want = force || !jobs[j].has || j == J_NET || (JOB_EVERY[j] != NEVER && now - jobs[j].at >= JOB_EVERY[j]);
+    if (j == J_FACT || j == J_ADVICE) want = !jobs[j].has;
+    if (want) { pending |= jbit(j); jobs[j].err = 0; tries[j] = 0; }
+  }
+  if (force) ntpForce = true;
+  needTime = !timeValid() || force;
+  syncTotal = __builtin_popcount(pending);
+  syncGotData = false;
+  queueGate(now);
+}
+
+// Order the requests run in: what you most likely look at first, the slow "extras" last.
+const uint8_t RUN_ORDER[J_COUNT] = {J_GEO, J_WEATHER, J_AQI, J_CUR, J_NET, J_GITHUB, J_ISS, J_CREW, J_FACT, J_ADVICE};
+
+// Background refresh while the session is up. Screens with live data (Net, ISS) only refresh while you look at them.
+void autoRefresh(uint32_t now) {
+  for (int j = 0; j < J_COUNT; j++) {
+    if (JOB_EVERY[j] == NEVER || !jobs[j].has || (pending & jbit(j))) continue;
+    if (j == J_NET && !(viewing && cur == IT_NET)) continue;
+    if (j == J_ISS && !(viewing && cur == IT_ISS)) continue;
+    if (jobs[j].err && now - jobs[j].failAt < 60000UL) continue;
+    if (now - jobs[j].at >= JOB_EVERY[j]) { pending |= jbit(j); tries[j] = 0; }
+  }
+}
+
+void sessionTag(char *b, size_t n) {
+  if (!netConfigured) snprintf(b, n, "no setup");
+  else if (wst == W_CONNECTING || wst == W_BACKOFF) snprintf(b, n, "wifi %d/%d", connectTry, CONNECT_TRIES);
+  else if (wst == W_FAIL) snprintf(b, n, "offline");
+  else if (wst == W_UP && pending && syncTotal > 0) snprintf(b, n, "sync %d/%d", syncTotal - __builtin_popcount(pending), syncTotal);
+  else if (wst == W_UP) snprintf(b, n, "online");
+  else snprintf(b, n, "off");
 }
 
 void openItem(int it, uint32_t now) {
@@ -566,7 +625,7 @@ int primaryJob(int it) {
 
 bool busyFor(int it) {
   if (pending & itemJobs(it)) return true;
-  return itemNeedsTime(it) && needTime && !timeValid() && (wst == W_CONNECTING || wst == W_UP);
+  return itemNeedsTime(it) && needTime && !timeValid() && (wst == W_CONNECTING || wst == W_BACKOFF || wst == W_UP);
 }
 
 bool ready(int it) {
@@ -608,8 +667,10 @@ void drawStatus(U8G2 &d, int it, uint32_t now) {
     return;
   }
   if (busyFor(it)) {
-    char line[24];
-    const char *what = wst == W_CONNECTING ? "Connecting" : (itemNeedsTime(it) ? "Syncing time" : "Fetching");
+    char line[28];
+    char what[20];
+    if (wst == W_CONNECTING || wst == W_BACKOFF) snprintf(what, sizeof(what), "Connecting %d/%d", connectTry, CONNECT_TRIES);
+    else snprintf(what, sizeof(what), "%s", itemNeedsTime(it) ? "Syncing time" : "Fetching");
     snprintf(line, sizeof(line), "%s%.*s", what, (int)((now / 350) % 4), "...");
     d.drawStr(0, 36, line);
     return;
@@ -922,9 +983,9 @@ void drawGithub(U8G2 &d, uint32_t now) {
 }
 
 void drawList(U8G2 &d) {
-  d.setFont(u8g2_font_7x13B_tf);
-  d.drawStr(0, 12, "ONLINE");
-  d.drawHLine(0, 15, 128);
+  char tag[16];
+  sessionTag(tag, sizeof(tag));
+  header(d, "ONLINE", tag);
   d.setFont(u8g2_font_7x13_tf);
   const int visible = 3;
   int first = listIdx - visible + 1;
@@ -934,7 +995,7 @@ void drawList(U8G2 &d) {
     int i = first + row;
     int y = 29 + row * 13;
     if (i == listIdx) d.drawStr(0, y, ">");
-    d.drawStr(14, y, i == IT_COUNT ? "Back" : ITEM_NAMES[i]);
+    d.drawStr(14, y, i == IT_COUNT ? "Sync now" : i == IT_COUNT + 1 ? "Back" : ITEM_NAMES[i]);
   }
   d.setFont(u8g2_font_5x7_tf);
   d.drawStr(0, 63, "A up B ok C dn Touch=Home");
@@ -946,14 +1007,22 @@ void drawList(U8G2 &d) {
 void enter() {
   viewing = false;
   listIdx = 0;
+  session = true;
   pending = 0;
   needTime = false;
+  syncTotal = 0;
+  if (!netConfigured) return;
+  uint32_t now = millis();
+  queueSync(now, false);
+  beginSession(now);                 // the one and only connection for this visit
 }
 
 void leave() {
+  session = false;
   viewing = false;
   pending = 0;
   needTime = false;
+  syncTotal = 0;
   if (wst != W_OFF) radioOff();
 }
 
@@ -962,15 +1031,20 @@ bool input(bool a, bool b, bool c, uint32_t now) {
     if (a) listIdx = (listIdx + LIST_COUNT - 1) % LIST_COUNT;
     if (c) listIdx = (listIdx + 1) % LIST_COUNT;
     if (b) {
-      if (listIdx == IT_COUNT) return true;
-      openItem(listIdx, now);
+      if (listIdx == IT_COUNT + 1) return true;
+      if (listIdx == IT_COUNT) {
+        if (netConfigured) {
+          queueSync(now, true);
+          if (wst == W_OFF || wst == W_FAIL) beginSession(now);
+        }
+      } else {
+        openItem(listIdx, now);
+      }
     }
     return false;
   }
-  if (b) {                     // back to the list, drop anything not started yet
+  if (b) {                     // back to the list (a running sync keeps going)
     viewing = false;
-    pending = 0;
-    needTime = false;
     return false;
   }
   if (c) openItem((cur + 1) % IT_COUNT, now);
@@ -979,58 +1053,88 @@ bool input(bool a, bool b, bool c, uint32_t now) {
 }
 
 void tick(uint32_t now) {
+  if (!session) return;
+  if (wst == W_BACKOFF) {
+    if ((int32_t)(now - backoffUntil) >= 0) startAttempt(now);
+    return;
+  }
   if (wst == W_CONNECTING) {
     int s = WiFi.status();
     if (s == WL_CONNECTED) {
       wst = W_UP;
-      connectedAt = now;
-      lastNetUse = now;
+      settleUntil = now + SETTLE_MS;
       startSntp(now);
     } else if (s == WL_CONNECT_FAILED || now - connectStart > CONNECT_TIMEOUT_MS) {
-      failPending(1);
-      radioOff();
-      wst = W_FAIL;
+      WiFi.disconnect();
+      if (connectTry < CONNECT_TRIES) {                 // random connect failures: just try again
+        connectTry++;
+        wst = W_BACKOFF;
+        backoffUntil = now + BACKOFF_MS;
+      } else {
+        failPending(1);
+        radioOff();
+        wst = W_FAIL;
+      }
     }
     return;
   }
   if (wst != W_UP) return;
 
-  if (WiFi.status() != WL_CONNECTED) {      // link dropped
-    wst = W_OFF;
-    if (pending || needTime) ensureNet(now);
+  if (WiFi.status() != WL_CONNECTED) {                  // link dropped: reconnect by itself, queued work stays queued
+    beginSession(now);
     return;
   }
   if (needTime && timeValid() && now - ntpStartedAt > 1500) {
     needTime = false;
     ntpOkAt = now;
   }
+  if ((int32_t)(now - settleUntil) < 0) return;
+
   if (pending) {
     if (!drawnSince && (int32_t)(now - gate) < 0) return;      // wait for the "Fetching..." frame
     int pick = -1;
-    for (int j = 0; j < J_COUNT; j++)
-      if (pending & jbit(j)) { pick = j; break; }
+    for (int i = 0; i < J_COUNT && pick < 0; i++)
+      if (pending & jbit(RUN_ORDER[i])) pick = RUN_ORDER[i];
     int run = pick;
     if ((pick == J_WEATHER || pick == J_AQI) && !haveLoc) run = J_GEO;
     uint8_t e = runJob(run);
+    bool transient = e == 3 || (e == 2 && (jobs[run].http <= 0 || jobs[run].http >= 500));
+    if (e && transient && tries[run] + 1 < JOB_TRIES) {         // random network hiccup: retry shortly
+      tries[run]++;
+      drawnSince = false;
+      gate = millis() + 800;
+      return;
+    }
+    tries[run] = 0;
     jobs[run].err = e;
     if (!e) {
       jobs[run].has = true;
       jobs[run].at = millis();
-      if (run != J_GEO) treats++;
+      if (run != J_GEO) syncGotData = true;
+    } else {
+      jobs[run].failAt = millis();
     }
     if (run == J_NET) jobs[J_NET].has = true;
     if (run == pick) pending &= ~jbit(pick);
     else if (e) {                           // location lookup failed: the jobs waiting for it fail too
       jobs[pick].err = 4;
+      jobs[pick].failAt = millis();
       pending &= ~jbit(pick);
     }
-    lastNetUse = millis();
-    queueGate(lastNetUse);
+    queueGate(millis());
     return;
   }
-  bool timeWait = needTime && !timeValid() && now - connectedAt < 15000;
-  bool keep = (viewing && cur == IT_NET) || timeWait;
-  if (!keep && now - lastNetUse > RADIO_IDLE_MS) radioOff();
+
+  if (syncTotal > 0) {                      // sync finished
+    if (syncGotData) treats++;              // one treat per sync
+    syncTotal = 0;
+    syncGotData = false;
+  }
+  if (now - lastAuto >= 3000) {
+    lastAuto = now;
+    autoRefresh(now);
+    if (pending) queueGate(now);
+  }
 }
 
 void draw(U8G2 &d, uint32_t now) {

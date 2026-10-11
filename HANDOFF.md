@@ -86,18 +86,18 @@ Online mode just landed (host syntax check passes, nothing compiled for the chip
 
 ### Online mode (online.cpp)
 - **Items vs jobs.** 12 screens ("items") map to 10 network "jobs" (geo, weather, aqi, currency, fact, advice, net, iss, crew, github). Forecast reuses the weather job; Clock/World/Moon only need NTP time.
-- **Radio policy.** Wi-Fi is off in the list and in Pet mode. Opening a stale screen queues its jobs and starts the connect. `tick()` runs at most one request per call, only after a frame was drawn ("Fetching..." shows first). Radio goes off 6 s after the last request (kept on while on Net status, or while waiting up to 15 s for NTP). `leave()` turns it off at once.
+- **Radio policy: ONE session per visit.** `enter()` queues every job (`queueSync`) and connects once; `leave()` switches the radio off. Nothing else touches Wi-Fi, and Pet/other modes never turn it on. Connect has 3 automatic attempts (10 s each, 1 s backoff), `WiFi.setTxPower(WIFI_TX_POWER)` defaults to 8.5 dBm (known fix for flaky C3 Super Mini antennas, overridable in secrets.h). Link drop while in Online reconnects by itself and keeps the queue. `tick()` runs at most one request per call, only after a frame was drawn; transient failures (HTTP <= 0 or >= 500, bad JSON) retry up to 3 times. After the initial sync, `autoRefresh()` re-queues stale jobs every 3 s (Net/ISS only while that screen is open; a failed refresh waits 60 s). Do not add per-screen `WiFi.begin()` calls.
 - **Time.** System time is UTC (`configTime(0,0,...)`), then `TZ` is set from `LOCAL_TZ` (default `PKT-5`). Clock keeps ticking with the radio off. World clocks compute offsets with their own DST rules (EU, US, AU). Do not call `configTime` elsewhere with an offset, it resets TZ.
 - **Cache.** Each job has `at/has/err/http`. Failed refresh keeps old data and shows `!` in the header tag. Intervals live in `JOB_EVERY[]`.
 - **Location.** `LOCATION_LAT/LON/NAME` in secrets.h, else one IP lookup per boot (ip-api.com, HTTP). No city or coordinates are committed.
-- **Controls inside a screen.** A = refresh (ignored within 1.5 s of the last one), C = next screen, B = back to list, touch = Home (existing global rule).
-- **Pet hook.** `online::petHint()` reads cached data only; `drawPetBadge()` is drawn after `drawPet()` in main.cpp, `drawPet()` itself is untouched. `takeTreats()` gives +1 happiness per successful fetch.
+- **Controls.** List: A/C move, B opens; extra rows "Sync now" (refetch everything) and "Back". Inside a screen: A = refresh that screen's jobs (ignored within 1.5 s of the last one), C = next screen, B = back to list, touch = Home (existing global rule).
+- **Pet hook.** `online::petHint()` reads cached data only; `drawPetBadge()` is drawn after `drawPet()` in main.cpp, `drawPet()` itself is untouched. `takeTreats()` gives +1 happiness per completed sync.
 - **Known approximations.** Moon phase uses the mean synodic month (can be off by up to about a day). `setInsecure()` TLS. ISS/crew use open-notify (HTTP only, free service, may be down; failure just shows "Couldn't load").
 
 ### What Salman should test on the device (Online)
 1. Build with PlatformIO (it will download ArduinoJson). Send me the build output if it fails; I could not compile for the chip.
 2. Copy `src/secrets.example.h` to `src/secrets.h`, set SSID + password, flash.
-3. Online > Clock: connects, shows PKT time. Leave the screen idle: radio should switch off after a few seconds but the seconds keep ticking.
+3. Online: the list header should go `wifi 1/3` > `sync n/9` > `online`, all with ONE connection. Clock shows PKT time.
 4. Weather / Forecast / Air quality: city comes from the IP lookup, values look sane. Press A to refresh.
 5. Currency, World clocks (compare with a phone), Moon, Net status (RSSI, IP, ping), ISS dot moves between refreshes, GitHub shows your repo.
 6. Fact / Advice: A gives a new one, long ones scroll.

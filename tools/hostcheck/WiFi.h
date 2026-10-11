@@ -2,10 +2,11 @@
 // Mock WiFi.h + time helpers for the host syntax check only.
 #include <Arduino.h>
 #include <time.h>
-enum { WIFI_OFF = 0, WIFI_STA = 1, WL_CONNECTED = 3, WL_CONNECT_FAILED = 4, WL_DISCONNECTED = 6 };
+enum { WIFI_POWER_8_5dBm = 34, WIFI_POWER_11dBm = 44, WIFI_OFF = 0, WIFI_STA = 1, WL_CONNECTED = 3, WL_CONNECT_FAILED = 4, WL_DISCONNECTED = 6 };
 struct IPAddress { String toString() const { return String(); } };
 struct WiFiC {
   void mode(int) {}
+  void setTxPower(int) {}
   void begin(const char *, const char *) {}
   int status() { return WL_DISCONNECTED; }
   void disconnect(bool = false, bool = false) {}
