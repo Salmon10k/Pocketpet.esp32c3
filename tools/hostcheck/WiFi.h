@@ -10,6 +10,9 @@ struct WiFiC {
   void mode(int) {}
   void setTxPower(int) {}
   void begin(const char *, const char *) {}
+  void begin(const char *, const char *, int32_t, const uint8_t *) {}
+  int32_t channel() { return 1; }
+  uint8_t *BSSID() { return nullptr; }
   int status() { return WL_DISCONNECTED; }
   void disconnect(bool = false, bool = false) {}
   int RSSI() { return 0; }

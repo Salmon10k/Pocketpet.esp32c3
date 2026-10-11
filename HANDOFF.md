@@ -201,3 +201,8 @@ Brightness (contrast 8/60/150/255), Screen auto-off (Off/30 s/1 min/5 min; wakes
 
 ## Ideas not yet approved
 Reaction test, Simon, Dino runner, Breakout, pet reacting to weather, morning greeting, deep sleep.
+
+### Quick connect (2026-10-11; not yet hardware-validated)
+- online.cpp: the last good network, channel and BSSID are kept in RAM. The next session tries exactly that first (`WiFi.begin(ssid, pass, channel, bssid)`, 4 s timeout, no scan) and falls back to the scan if it fails. Settle delay 600 -> 200 ms.
+- spotify.cpp: the access token is kept in RAM when leaving Spotify (valid ~1 h), so re-entering skips the login request; the pause before the first request is 150 ms instead of 700 ms.
+- Rollback: revert this commit.

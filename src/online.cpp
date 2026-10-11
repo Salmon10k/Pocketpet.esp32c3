@@ -35,7 +35,7 @@ namespace {
 const uint32_t CONNECT_TIMEOUT_MS = 10000;     // per attempt
 const int      CONNECT_TRIES      = 3;         // random "can't connect" is common on C3 boards: retry by itself
 const uint32_t BACKOFF_MS         = 1000;      // pause between connect attempts
-const uint32_t SETTLE_MS          = 600;       // let DHCP/DNS settle before the first request
+const uint32_t SETTLE_MS          = 200;       // let DHCP/DNS settle before the first request
 const uint32_t HTTP_TIMEOUT_MS    = 7000;
 const int      JOB_TRIES          = 3;         // a request that fails for a network reason is retried
 const uint32_t NTP_RESYNC_MS      = 6UL * 3600UL * 1000UL;
@@ -90,6 +90,13 @@ uint32_t hintUntil = 0;
 // One Wi-Fi session per visit to Online mode: connect once on entering, fetch everything, stay
 // connected while you are in Online mode, switch the radio off when you leave.
 bool session = false;
+// Quick reconnect: the network, channel and router (BSSID) of the last good connection are remembered in RAM.
+// The next session tries exactly that first (no scan, no channel search) with a short timeout and only
+// falls back to the scan if it fails (new place, router moved).
+bool haveLast = false, fastTry = false;
+uint8_t lastNetIdx = 0, lastBssid[6];
+int lastCh = 0;
+const uint32_t FAST_TIMEOUT_MS = 4000;
 bool wifiHold = false;          // another mode (Spotify) is using the radio
 WifiState wst = W_OFF;
 int attempt = 0, attemptTotal = CONNECT_TRIES;   // 1-based attempt counter shown as "wifi 2/3"
@@ -272,7 +279,8 @@ void startAttempt(uint32_t now) {
   const Net &n = NETS[order[(attempt - 1) % orderLen]];
   WiFi.mode(WIFI_STA);
   WiFi.setTxPower(WIFI_TX_POWER);
-  WiFi.begin(n.ssid, n.pass);
+  if (fastTry && haveLast) WiFi.begin(n.ssid, n.pass, lastCh, lastBssid);
+  else WiFi.begin(n.ssid, n.pass);
   wst = W_CONNECTING;
   connectStart = now;
 }
@@ -305,12 +313,36 @@ void buildOrder(int n) {
   attemptTotal = total < CONNECT_TRIES ? CONNECT_TRIES : (total > 8 ? 8 : total);
 }
 
+int validNets() {
+  int v = 0;
+  for (int k = 0; k < NETN; k++)
+    if (NETS[k].ssid[0]) v++;
+  return v;
+}
+
+void startScan(uint32_t now) {
+  attempt = 0;
+  fastTry = false;
+  WiFi.mode(WIFI_STA);
+  WiFi.scanNetworks(true);                     // async, polled in tick()
+  wst = W_SCAN;
+  scanStart = now;
+}
+
 void beginSession(uint32_t now) {              // pick a network and connect (with automatic retries)
   if (!netConfigured) return;
   attempt = 0;
-  int valid = 0, only = 0;
+  int valid = validNets(), only = 0;
   for (int k = 0; k < NETN; k++)
-    if (NETS[k].ssid[0]) { valid++; only = k; }
+    if (NETS[k].ssid[0]) only = k;
+  if (haveLast && lastNetIdx < NETN && NETS[lastNetIdx].ssid[0]) {   // quick path: same network as last time
+    fastTry = true;
+    order[0] = lastNetIdx;
+    orderLen = 1;
+    attemptTotal = CONNECT_TRIES;
+    startAttempt(now);
+    return;
+  }
   if (valid == 1) {                            // one network: no scan needed
     order[0] = (uint8_t)only;
     orderLen = 1;
@@ -318,10 +350,7 @@ void beginSession(uint32_t now) {              // pick a network and connect (wi
     startAttempt(now);
     return;
   }
-  WiFi.mode(WIFI_STA);
-  WiFi.scanNetworks(true);                     // async, polled in tick()
-  wst = W_SCAN;
-  scanStart = now;
+  startScan(now);
 }
 
 void queueGate(uint32_t now) {      // let one frame ("Fetching...") reach the screen before a request blocks the loop
@@ -1162,11 +1191,22 @@ void tick(uint32_t now) {
   if (wst == W_CONNECTING) {
     int s = WiFi.status();
     if (s == WL_CONNECTED) {
+      lastNetIdx = order[(attempt - 1) % orderLen];       // remember it for a quick reconnect next time
+      lastCh = WiFi.channel();
+      const uint8_t *bs = WiFi.BSSID();
+      if (bs) { memcpy(lastBssid, bs, 6); haveLast = true; }
+      fastTry = false;
       wst = W_UP;
       settleUntil = now + SETTLE_MS;
       startSntp(now);
-    } else if (s == WL_CONNECT_FAILED || now - connectStart > CONNECT_TIMEOUT_MS) {
+    } else if (s == WL_CONNECT_FAILED || now - connectStart > (fastTry ? FAST_TIMEOUT_MS : CONNECT_TIMEOUT_MS)) {
       WiFi.disconnect();
+      if (fastTry) {                                        // the remembered router did not answer
+        fastTry = false;
+        haveLast = false;
+        if (validNets() > 1) { startScan(now); return; }    // maybe we moved: look around
+        attempt = 0;                                        // single network: the normal attempts start now
+      }
       if (attempt < attemptTotal) {                     // random connect failures: just try again (next network if several)
         wst = W_BACKOFF;
         backoffUntil = now + BACKOFF_MS;
