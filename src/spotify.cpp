@@ -898,12 +898,6 @@ void drawBig(U8G2 &d, const char *text, int xShift, int fMil) {
       }
       i = j;
     }
-    if (sung >= 0) {                                                  // progress bar: solid = sung, dotted = still to come
-      int filled = sung - g;
-      filled = filled < 0 ? 0 : (filled > L ? L : filled) * fw;
-      d.drawHLine(x0, base + 3, filled);
-      for (int x = x0 + filled; x < x0 + L * fw; x += 3) d.drawPixel(x, base + 3);
-    }
     g += L;
   }
 }
@@ -913,6 +907,17 @@ void drawSmall(U8G2 &d, const char *s, int base, int xShift) {
   d.setFont(u8g2_font_5x7_tf);
   trimTo(d, s, buf, sizeof(buf), 128);
   d.drawStr((128 - d.getStrWidth(buf)) / 2 + xShift, base, buf);
+}
+
+// A quiet, labelled preview keeps it visually distinct from the main karaoke line.
+void drawNextPreview(U8G2 &d, const char *s, int base, int xShift) {
+  char buf[40];
+  d.setFont(u8g2_font_5x7_tf);
+  trimTo(d, s, buf, sizeof(buf), 100);
+  d.drawStr(2, base, "NEXT");
+  const int left = 23;
+  const int width = 103;
+  d.drawStr(left + (width - d.getStrWidth(buf)) / 2 + xShift, base, buf);
 }
 
 }  // namespace
@@ -954,6 +959,7 @@ static void drawLocked(U8G2 &d, uint32_t now) {
   drawMarquee(d, head, 7, now, trackShift, 112);
   d.setMaxClipWindow();
   drawEq(d, 117, now, playing);
+  d.drawHLine(0, 10, 128);                         // quiet divider under the metadata row
 
   if (lyr == L_HAVE && lineCount > 0) {
     int target = -1;                                  // last line whose time has come
@@ -987,7 +993,11 @@ static void drawLocked(U8G2 &d, uint32_t now) {
       int f = rel <= 0 ? 0 : (rel >= (int)dur ? 1000 : (int)((int64_t)rel * 1000 / (int)dur));
       drawBig(d, txt, inShift, f);
     }
-    if (!noteOn && target >= 0 && strlen(pool + lines[target].off) <= 40 && target + 1 < lineCount && pool[lines[target + 1].off]) drawSmall(d, pool + lines[target + 1].off, 56, inShift);
+    if (!noteOn && target >= 0 && strlen(pool + lines[target].off) <= 40 &&
+        target + 1 < lineCount && pool[lines[target + 1].off]) {
+      d.drawHLine(0, 49, 128);                       // separate main lyric from its preview
+      drawNextPreview(d, pool + lines[target + 1].off, 58, inShift);
+    }
   } else {
     drawBig(d, dTitle, trackShift, -1);               // no synced lyrics: just the song, nicely centered
     d.setFont(u8g2_font_5x7_tf);
@@ -1016,9 +1026,10 @@ static void drawLocked(U8G2 &d, uint32_t now) {
     d.drawStr((128 - d.getStrWidth(nb)) / 2, 60, nb);
   }
   if (durMs) {
-    int w = (int)((uint64_t)pos * 128 / durMs);
-    d.drawHLine(0, 63, w);
-    d.drawPixel(w < 127 ? w + 1 : 127, 62);
+    int w = (int)((uint64_t)pos * 127 / durMs);
+    for (int x = 0; x < 128; x += 3) d.drawPixel(x, 63);  // dotted unplayed rail
+    d.drawHLine(0, 63, w);                               // solid elapsed portion
+    d.drawVLine(w, 60, 4);                               // small playhead marker
   }
   d.setFontMode(0);
 }
