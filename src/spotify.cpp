@@ -713,8 +713,7 @@ void enter() {
     isOpen = true;
     phase = P_WIFI;
     errMsg[0] = 0;
-    haveToken = false;
-    haveTrack = false;
+    haveTrack = false;                 // the access token (RAM only, valid ~1 h) is kept: re-entering skips the login
     nothing = false;
     playing = false;
     trackId[0] = 0;
@@ -745,8 +744,6 @@ void leave() {
     isOpen = false;
     ++sessionEpoch;
     pendingWork = NW_NONE;
-    token[0] = 0;
-    haveToken = false;
     lineCount = 0;
   }
   // Do not stop sec here: an in-flight worker request owns that client.
@@ -761,7 +758,7 @@ void tick(uint32_t now) {
     if (!workerBusy && pendingWork == NW_NONE) phase = P_WIFI;
     return;
   }
-  if (phase == P_WIFI) { phase = P_LOGIN; blockedUntil = now + 700; }
+  if (phase == P_WIFI) { phase = P_LOGIN; blockedUntil = now + 150; }
   if (!drawnSince && (int32_t)(now - gateUntil) < 0) return;
   if ((int32_t)(now - blockedUntil) < 0) return;
 
