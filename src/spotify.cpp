@@ -239,6 +239,7 @@ char trackId[40] = "";
 char title[96] = "", artist[64] = "", album[64] = "", artists[80] = "";   // raw UTF-8 for lookups
 char dTitle[96] = "", dArtists[80] = "";                                  // Latin-1 for the screen
 uint32_t durMs = 0, progMs = 0, progAt = 0;
+uint32_t lastPollRttMs = 0; // round-trip time of the last Spotify progress sample
 uint32_t nextPoll = 0;
 Lyr lyr = L_NONE;
 uint8_t lyrTries = 0;
@@ -410,8 +411,10 @@ void poll(uint32_t now) {
     strncpy(accessToken, token, sizeof(accessToken) - 1);
     accessToken[sizeof(accessToken) - 1] = 0;
   }
+  uint32_t requestAt = millis();
   Reply r = request("api.spotify.com", "GET", "/v1/me/player/currently-playing", accessToken, nullptr, true);
   uint32_t t1 = millis();
+  lastPollRttMs = t1 - requestAt;
   StateGuard guard;
   if (!currentWorkLocked()) return;
   if (r.code == 401) { haveToken = false; return; }
@@ -699,11 +702,22 @@ bool getLyricsView(LyricsView &out, uint32_t now) {
     strncpy(out.status, st, sizeof(out.status) - 1);
     out.statusBusy = busy && st[0];
   }
+  // Spotify's progress_ms is sampled during the HTTP request, not when the
+  // response reaches the ESP32. The normal renderer keeps its established
+  // timing, but the independent visualizer uses a midpoint RTT correction.
+  // This removes most of the visible network-latency offset without touching
+  // the original Spotify renderer.
   out.positionMs = position(now);
+  if (playing && haveTrack) {
+    out.positionMs += lastPollRttMs / 2;
+    if (durMs && out.positionMs > durMs) out.positionMs = durMs;
+  }
   out.durationMs = durMs;
   if (!haveTrack || lyr != L_HAVE || lineCount <= 0) return true;
 
-  const uint32_t targetTime = out.positionMs + LYRIC_LEAD_MS;
+  // The visualizer is drawn locally at frame rate, so it does not need the
+  // old renderer's 300 ms lyric lead. Use the actual playback position.
+  const uint32_t targetTime = out.positionMs;
   int target = -1;
   for (int i = 0; i < lineCount && lines[i].ms <= targetTime; ++i) target = i;
   if (target < 0 || !pool[lines[target].off]) return true;
