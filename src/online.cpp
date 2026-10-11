@@ -90,13 +90,14 @@ uint32_t hintUntil = 0;
 // One Wi-Fi session per visit to Online mode: connect once on entering, fetch everything, stay
 // connected while you are in Online mode, switch the radio off when you leave.
 bool session = false;
-// Quick reconnect: the network, channel and router (BSSID) of the last good connection are remembered in RAM.
-// The next session tries exactly that first (no scan, no channel search) with a short timeout and only
-// falls back to the scan if it fails (new place, router moved).
+// Quick reconnect: the last good network is remembered in RAM. The next session tries it first (no
+// scan of our own) and only falls back to the scan if it fails (new place). Channel / BSSID are NOT
+// pinned: phone hotspots and mesh routers change them between sessions, which made a pinned attempt
+// fail and cost several seconds.
 bool haveLast = false, fastTry = false;
-uint8_t lastNetIdx = 0, lastBssid[6];
-int lastCh = 0;
-const uint32_t FAST_TIMEOUT_MS = 4000;
+uint8_t lastNetIdx = 0;
+const uint32_t FAST_TIMEOUT_MS = 5000;
+uint32_t sessionT0 = 0;                          // for the serial timing log
 bool wifiHold = false;          // another mode (Spotify) is using the radio
 WifiState wst = W_OFF;
 int attempt = 0, attemptTotal = CONNECT_TRIES;   // 1-based attempt counter shown as "wifi 2/3"
@@ -279,8 +280,8 @@ void startAttempt(uint32_t now) {
   const Net &n = NETS[order[(attempt - 1) % orderLen]];
   WiFi.mode(WIFI_STA);
   WiFi.setTxPower(WIFI_TX_POWER);
-  if (fastTry && haveLast) WiFi.begin(n.ssid, n.pass, lastCh, lastBssid);
-  else WiFi.begin(n.ssid, n.pass);
+  WiFi.begin(n.ssid, n.pass);
+  if (Serial) Serial.printf("wifi: +%lu ms attempt %d/%d \"%s\"%s\n", (unsigned long)(now - sessionT0), attempt, attemptTotal, n.ssid, fastTry ? " (remembered network)" : "");
   wst = W_CONNECTING;
   connectStart = now;
 }
@@ -321,6 +322,7 @@ int validNets() {
 }
 
 void startScan(uint32_t now) {
+  if (Serial) Serial.printf("wifi: +%lu ms scanning\n", (unsigned long)(now - sessionT0));
   attempt = 0;
   fastTry = false;
   WiFi.mode(WIFI_STA);
@@ -331,6 +333,7 @@ void startScan(uint32_t now) {
 
 void beginSession(uint32_t now) {              // pick a network and connect (with automatic retries)
   if (!netConfigured) return;
+  sessionT0 = now;
   attempt = 0;
   int valid = validNets(), only = 0;
   for (int k = 0; k < NETN; k++)
@@ -1192,16 +1195,16 @@ void tick(uint32_t now) {
     int s = WiFi.status();
     if (s == WL_CONNECTED) {
       lastNetIdx = order[(attempt - 1) % orderLen];       // remember it for a quick reconnect next time
-      lastCh = WiFi.channel();
-      const uint8_t *bs = WiFi.BSSID();
-      if (bs) { memcpy(lastBssid, bs, 6); haveLast = true; }
+      haveLast = true;
+      if (Serial) Serial.printf("wifi: connected +%lu ms\n", (unsigned long)(now - sessionT0));
       fastTry = false;
       wst = W_UP;
       settleUntil = now + SETTLE_MS;
       startSntp(now);
     } else if (s == WL_CONNECT_FAILED || now - connectStart > (fastTry ? FAST_TIMEOUT_MS : CONNECT_TIMEOUT_MS)) {
       WiFi.disconnect();
-      if (fastTry) {                                        // the remembered router did not answer
+      if (Serial) Serial.printf("wifi: +%lu ms attempt %d failed (status %d)\n", (unsigned long)(now - sessionT0), attempt, s);
+      if (fastTry) {                                        // the remembered network did not answer
         fastTry = false;
         haveLast = false;
         if (validNets() > 1) { startScan(now); return; }    // maybe we moved: look around

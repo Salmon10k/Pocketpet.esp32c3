@@ -235,3 +235,9 @@ Reaction test, Simon, Dino runner, Breakout, pet reacting to weather, morning gr
 - Word selection, Spotify data, controls and the old Spotify screen are untouched.
 - U8g2 coordinates are unsigned 8-bit, so every scene line goes through `ln()`, which clips to the screen first. Do not call `drawLine` directly with off-screen points.
 - Rollback: revert this commit.
+
+### Wi-Fi speed fix + visualizer status pill (2026-10-11; not yet hardware-validated)
+- Salman reported the connection got slower after the quick-connect change. Likely cause: the remembered channel/BSSID was pinned in `WiFi.begin`; phone hotspots and mesh routers change those, so the pinned attempt failed and cost seconds before the normal path. Now only the last network is remembered (plain `WiFi.begin`, own scan skipped, 5 s timeout, then the normal scan). Cause is NOT confirmed on hardware.
+- Serial timing log added: `wifi: +ms attempt ...`, `wifi: connected +ms`, and one `net: host/path -> code in N ms, heap N KB` line per Spotify/LRCLIB request. If it is still slow, read the serial monitor to see which step takes the time.
+- The visualizer counts as the drawn frame for the request gate (it used to wait the 250 ms gate timeout after every request).
+- Lyrics visual now shows a small status pill over the interlude: connecting wifi / logging in / asking spotify / finding lyrics / nothing playing / no synced lyrics / error text (`LyricsView::status`, `statusBusy`).

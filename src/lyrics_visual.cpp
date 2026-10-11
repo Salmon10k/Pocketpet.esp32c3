@@ -253,6 +253,39 @@ void drawAmbient(U8G2 &d, uint32_t now) {                    // no lyrics yet: j
   sceneSynth(d, now / 2, 0);
 }
 
+// "What is it doing" pill at the bottom, shown over the interlude until lyrics are on screen.
+void drawStatus(U8G2 &d, const char *text, bool busy, uint32_t now) {
+  if (!text[0]) return;
+  d.setFont(u8g2_font_5x7_tf);
+  char l1[26], l2[26] = "";
+  int len = (int)strlen(text);
+  if (len <= 24) { strncpy(l1, text, 25); l1[25] = 0; }
+  else {
+    int cut = 24;
+    while (cut > 8 && text[cut] != ' ') cut--;
+    memcpy(l1, text, (size_t)cut); l1[cut] = 0;
+    const char *rest = text + cut + (text[cut] == ' ' ? 1 : 0);
+    strncpy(l2, rest, 24); l2[24] = 0;
+  }
+  int dots = busy ? (int)((now / 320) % 4) : 0;
+  int w1 = d.getStrWidth(l1), w2 = d.getStrWidth(l2);
+  int w = (w1 > w2 ? w1 : w2) + (busy ? 15 : 0) + 10;
+  int h = l2[0] ? 21 : 12;
+  int x = (128 - w) / 2, y = 64 - h;
+  d.setDrawColor(0);
+  d.drawBox(x, y, w, h);
+  d.setDrawColor(1);
+  d.drawFrame(x, y, w, h);
+  int tx = x + 5;
+  if (!l2[0]) {
+    d.drawStr(tx, 61, l1);
+    for (int i = 0; i < dots; i++) d.drawPixel(tx + w1 + 2 + i * 4, 60);
+  } else {
+    d.drawStr(tx, 53, l1);
+    d.drawStr(tx, 61, l2);
+  }
+}
+
 void drawWord(U8G2 &d, const char *word, uint32_t now, int scene, uint32_t seed) {
   char fitted[28];
   strncpy(fitted, word, sizeof(fitted) - 1);
@@ -311,8 +344,8 @@ void draw(U8G2 &d, uint32_t now) {
   spotify::getLyricsView(view, now);
 
   if (!view.haveTrack || !view.lyricsReady || !view.line[0]) {
-    // No metadata, status labels, or controls: only a quiet generative interlude until lyrics arrive.
-    drawAmbient(d, now);
+    drawAmbient(d, now);                                       // quiet interlude, plus a small indicator of what it is waiting for
+    drawStatus(d, view.status, view.statusBusy, now);
     return;
   }
 

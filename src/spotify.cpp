@@ -303,6 +303,11 @@ struct Reply { int code; String body; };
 Reply request(const char *host, const char *method, const char *path, const char *bearer,
               const char *form, bool wantBody) {
   Reply r{-1, String()};
+  uint32_t t0 = millis();
+  struct Log {                                                  // one serial line per request: where does the time go?
+    Reply &r; const char *host, *path; uint32_t t0;
+    ~Log() { if (Serial) Serial.printf("net: %s%.28s -> %d in %lu ms, heap %lu KB\n", host, path, r.code, (unsigned long)(millis() - t0), (unsigned long)(ESP.getFreeHeap() / 1024)); }
+  } logger{r, host, path, t0};
   if (ESP.getFreeHeap() < MIN_HEAP) { r.code = -2; return r; }
   if (strcmp(secHost, host) != 0) { sec.stop(); secHost = host; }
   sec.setInsecure();
@@ -677,8 +682,23 @@ bool active() {
 bool getLyricsView(LyricsView &out, uint32_t now) {
   memset(&out, 0, sizeof(out));
   StateGuard guard;
+  drawnSince = true;                                   // the visualizer counts as the frame that lets the next request start
   out.haveTrack = haveTrack;
   out.playing = playing;
+  {                                                    // one line the visualizer can show as the "what is it doing" indicator
+    const char *st = "";
+    bool busy = true;
+    if (phase == P_ERROR) { st = errMsg; busy = false; }
+    else if (phase == P_WIFI) st = online::wifiStatusText();
+    else if (phase == P_LOGIN) st = "logging in";
+    else if (!haveTrack && nothing) { st = "nothing playing"; busy = false; }
+    else if (!haveTrack) st = "asking spotify";
+    else if (lyr == L_WANT) st = "finding lyrics";
+    else if (lyr == L_MISSING) { st = "no synced lyrics"; busy = false; }
+    else busy = false;
+    strncpy(out.status, st, sizeof(out.status) - 1);
+    out.statusBusy = busy && st[0];
+  }
   out.positionMs = position(now);
   out.durationMs = durMs;
   if (!haveTrack || lyr != L_HAVE || lineCount <= 0) return true;

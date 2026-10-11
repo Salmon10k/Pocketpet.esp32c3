@@ -23,6 +23,8 @@ struct LyricsView {
   uint32_t durationMs;
   uint32_t lineStartMs;
   uint32_t lineEndMs;
+  char status[40];       // short text about what Spotify mode is doing ("connecting wifi", "finding lyrics", errors); empty = nothing to say
+  bool statusBusy;       // true while it is still working (show animated dots)
   char line[96];
   char nextLine[96];
 };
