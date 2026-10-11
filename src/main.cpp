@@ -7,6 +7,7 @@
 #include "fluid.h"
 #include "online.h"
 #include "spotify.h"
+#include "lyrics_visual.h"
 
 // OLED: 1.3" SH1106 on hardware I2C (SDA = GPIO 8, SCL = GPIO 9).
 U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
@@ -557,6 +558,7 @@ enum Mode {
   MODE_GAMES,
   MODE_ONLINE,
   MODE_SPOTIFY,
+  MODE_LYRICS_VISUAL,
   MODE_SETTINGS,
   MODE_TEMP,
   MODE_8BALL,
@@ -570,8 +572,8 @@ enum Mode {
 
 Mode mode = MODE_MENU;
 
-const char *rootItems[] = {"Pet", "Fluid", "Stats", "Motion test", "Tools", "Games", "Online", "Spotify", "Settings"};
-const int ROOT_COUNT = 9;
+const char *rootItems[] = {"Pet", "Fluid", "Stats", "Motion test", "Tools", "Games", "Online", "Spotify", "Lyrics Visual", "Settings"};
+const int ROOT_COUNT = 10;
 const char *toolsItems[] = {"Temperature"};
 const int TOOLS_COUNT = 1;
 const char *gamesItems[] = {"Magic 8-ball", "Dice", "Snake", "Flappy", "Tilt Maze", "Dino Runner", "Catch Water"};
@@ -1318,6 +1320,7 @@ void enterMode(Mode m) {
   if (mode == MODE_PET && m != MODE_PET) saveStats(true);
   if (mode == MODE_ONLINE && m != MODE_ONLINE) online::leave();   // radio off, cancel requests
   if (mode == MODE_SPOTIFY && m != MODE_SPOTIFY) spotify::leave();
+  if (mode == MODE_LYRICS_VISUAL && m != MODE_LYRICS_VISUAL) lyrics_visual::leave();
   mode = m;
 
   if (m == MODE_PET) {
@@ -1328,6 +1331,7 @@ void enterMode(Mode m) {
   }
   if (m == MODE_ONLINE) online::enter();
   if (m == MODE_SPOTIFY) spotify::enter();
+  if (m == MODE_LYRICS_VISUAL) lyrics_visual::enter();
   if (m == MODE_SETTINGS) { settingsRow = 0; resetArmed = false; }
   if (m == MODE_8BALL) eightBallIndex = random(EIGHT_BALL_COUNT);
   if (m == MODE_DICE) diceValue = random(1, 7);
@@ -1438,7 +1442,7 @@ void loop() {
       lastInteraction = lastActivity = now;
     }
   } else if (setSleep && oledUp && SLEEP_MS[setSleep] && now - lastActivity > SLEEP_MS[setSleep] &&
-             mode != MODE_FLUID && mode != MODE_TILT_MAZE && mode != MODE_CATCH && mode != MODE_SPOTIFY) {
+             mode != MODE_FLUID && mode != MODE_TILT_MAZE && mode != MODE_CATCH && mode != MODE_SPOTIFY && mode != MODE_LYRICS_VISUAL) {
     screenOff = true;
     display.setPowerSave(1);
   }
@@ -1449,6 +1453,7 @@ void loop() {
   gameTick(now);
   online::tick(now);
   spotify::tick(now);
+  lyrics_visual::tick(now);
   for (int t = online::takeTreats(); t > 0; t--) addHappy(1);   // each successful fetch is a small treat
 
   // Every 2 seconds: recover the MPU and the OLED if either one dropped out.
@@ -1577,6 +1582,8 @@ void loop() {
         enterMode(MODE_ONLINE);
       } else if (menuIndex == 7) {
         enterMode(MODE_SPOTIFY);
+      } else if (menuIndex == 8) {
+        enterMode(MODE_LYRICS_VISUAL);
       } else {
         enterMode(MODE_SETTINGS);
       }
@@ -1613,6 +1620,8 @@ void loop() {
     }
   } else if (mode == MODE_ONLINE) {
     if (online::input(a, b, c, now)) enterMode(MODE_MENU);
+  } else if (mode == MODE_LYRICS_VISUAL) {
+    if (b) { menuIndex = 8; enterMode(MODE_MENU); }
   } else if (mode == MODE_SPOTIFY) {
     // B: short press = play/pause (on release), hold 0.7 s = back to the menu.
     static bool spHeld = false, spLong = false;
@@ -1706,6 +1715,8 @@ void loop() {
       online::draw(display, now);
     } else if (mode == MODE_SPOTIFY) {
       spotify::draw(display, now);
+    } else if (mode == MODE_LYRICS_VISUAL) {
+      lyrics_visual::draw(display, now);
     } else if (mode == MODE_TEMP) {
       drawTemperature();
     } else if (mode == MODE_8BALL) {
