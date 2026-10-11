@@ -590,7 +590,7 @@ int diceValue = 1;
 
 // ---------------- Mini-game state ----------------
 // All games are original, compact monochrome adaptations for the 128x64 OLED.
-// A/C are game actions; B returns to Games. Touch always returns Home outside Pet.
+// A/C are game actions; B returns to Games. The touch pad is ignored outside Pet.
 uint32_t gameLastTick = 0;
 bool gameOver = false;
 uint32_t gameScore = 0;
@@ -1167,7 +1167,7 @@ void drawMenuList(const char *title, const char *items[], int count, int selecte
   }
 
   display.setFont(u8g2_font_5x7_tf);
-  display.drawStr(0, 63, "A up B ok C dn Touch=Home");
+  display.drawStr(0, 63, "A up   B ok   C down");
 }
 
 void drawMenu() {
@@ -1423,6 +1423,7 @@ void loop() {
   bool c = pressed(btnC);
   bool touchDown = touchDownEvent;
   touchDownEvent = false;
+  if (mode != MODE_PET) touchDown = false;   // the pad is ignored outside Pet mode (it misfired)
 
   if (Serial && (a || b || c)) {
     Serial.printf("BUTTON: A=%d B=%d C=%d mode=%d menu=%d\n",
@@ -1443,12 +1444,7 @@ void loop() {
   }
   if (a || b || c || touchDown) lastInteraction = lastActivity = now;
 
-  // Touch pad doubles as a Home button outside Pet mode.
-  // (Not in Tilt Maze / Fluid: your grip on the back of the device would keep sending you home.)
-  if (touchDown && mode != MODE_PET && mode != MODE_MENU && mode != MODE_FLUID && mode != MODE_TILT_MAZE && mode != MODE_CATCH) {
-    menuIndex = 0;
-    enterMode(MODE_MENU);
-  }
+  // The touch pad only works in Pet mode (petting). It used to double as Home, but it misfired too often.
 
   gameTick(now);
   online::tick(now);
@@ -1618,7 +1614,19 @@ void loop() {
   } else if (mode == MODE_ONLINE) {
     if (online::input(a, b, c, now)) enterMode(MODE_MENU);
   } else if (mode == MODE_SPOTIFY) {
-    spotify::input(a, b, c, now);            // touch pad = Home (handled above)
+    // B: short press = play/pause (on release), hold 0.7 s = back to the menu.
+    static bool spHeld = false, spLong = false;
+    bool bShort = false;
+    if (b) { spHeld = true; spLong = false; }
+    if (spHeld) {
+      if (btnB.stable == LOW) {
+        if (!spLong && now - btnB.changedAt >= 700) { spLong = true; menuIndex = 7; enterMode(MODE_MENU); }
+      } else {
+        if (!spLong) bShort = true;
+        spHeld = false;
+      }
+    }
+    if (mode == MODE_SPOTIFY) spotify::input(a, bShort, c, now);
   } else if (mode == MODE_PET) {
     if (b) enterMode(MODE_MENU);
     if (a) {            // tickle

@@ -1068,7 +1068,7 @@ void drawList(U8G2 &d) {
     d.drawStr(14, y, i == IT_COUNT ? "Sync now" : i == IT_COUNT + 1 ? "Back" : ITEM_NAMES[i]);
   }
   d.setFont(u8g2_font_5x7_tf);
-  d.drawStr(0, 63, "A up B ok C dn Touch=Home");
+  d.drawStr(0, 63, "A up   B ok   C down");
 }
 
 }  // namespace

@@ -136,7 +136,7 @@ Tilt-controlled glass under a wandering tap, 20 s round, ends with % of drops ca
 12x4 cells, fixed 20 ms physics step (was loop-rate dependent), circle-vs-wall-rect collision. B back, A re-zero, C (or A after winning) new maze.
 
 ### Other behaviour notes
-Touch pad does NOT act as Home in Fluid / Tilt Maze (tilting would trigger it). Root menu order: Pet, Fluid, Stats, Motion test, Tools, Games, Online, Settings.
+The touch pad is Pet-mode only (as Home it misfired). Spotify mode: hold B 0.7 s to go back; B short press acts on release. Root menu order: Pet, Fluid, Stats, Motion test, Tools, Games, Online, Settings.
 
 ### Settings (MODE_SETTINGS)
 Brightness (contrast 8/60/150/255), Screen auto-off (Off/30 s/1 min/5 min; wakes on any button/touch/movement and swallows that first press; disabled in Fluid/Maze/Catch), Flip screen (180 deg, `setFlipMode`), Reset pet (B twice), Back. Stored in NVS keys `bright`/`sleep`/`flip`; `applyScreen()` must be called after every `display.begin()`. Tilt calibration is deliberately NOT here: each tilt mode re-zeroes with A.

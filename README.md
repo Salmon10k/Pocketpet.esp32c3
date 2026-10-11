@@ -34,7 +34,7 @@ The physical wiring did not change when the I2C roles were swapped. Only the dri
 ## Current firmware
 
 ### Menu
-Pet, Fluid, Stats, Motion test, Tools, Games, Online, Spotify, Settings (brightness, screen auto-off, flip screen, reset pet). Tools contains Temperature. Games contains Magic 8-ball, Dice, Snake, Flappy, procedurally generated Tilt Maze maps, and an upgraded Dino Runner with jumping, crouching, cactus clusters and flying birds. Online has 12 screens that need the internet (see below). Copy `src/secrets.example.h` to `src/secrets.h` and set `WIFI_SSID` / `WIFI_PASSWORD` locally first. Outside Pet mode, touching the pad returns to the main menu.
+Pet, Fluid, Stats, Motion test, Tools, Games, Online, Spotify, Settings (brightness, screen auto-off, flip screen, reset pet). Tools contains Temperature. Games contains Magic 8-ball, Dice, Snake, Flappy, procedurally generated Tilt Maze maps, and an upgraded Dino Runner with jumping, crouching, cactus clusters and flying birds. Online has 12 screens that need the internet (see below). Copy `src/secrets.example.h` to `src/secrets.h` and set `WIFI_SSID` / `WIFI_PASSWORD` locally first. The touch pad only works in Pet mode.
 
 ### Online mode
 Wi-Fi stays **off** everywhere except Online mode. Entering Online connects **once** (up to 3 automatic attempts, then each request is retried up to 3 times for random network hiccups), fetches everything for every screen in one go, and stays connected while you browse. Leaving Online switches the radio off. The list header shows the state: `wifi 2/3`, `sync 4/9`, `online`, `offline`. Every screen shows how old its data is (top right). If a refresh fails you keep the last good data.
@@ -67,7 +67,7 @@ Requests are blocking with a 7 second timeout, so the screen can pause briefly w
 **Connection problems:** many ESP32-C3 Super Mini boards fail to connect at full TX power, so the firmware lowers it to 8.5 dBm by default. If your router is far away and the signal is weak, put `#define WIFI_TX_POWER WIFI_POWER_11dBm` (or `WIFI_POWER_19_5dBm`) in `src/secrets.h`.
 
 ### Spotify mode
-Shows what is playing on your Spotify (any device: phone, PC, speaker), with **synced lyrics** from LRCLIB, and controls it: **A** previous, **B** play/pause, **C** next. Touch pad = Home. The screen stays on while you are in this mode. Needs Spotify **Premium** for the buttons (viewing works without) and the Wi-Fi from `secrets.h`. Spotify itself must be playing somewhere; the keychain is a remote, not a speaker.
+Shows what is playing on your Spotify (any device: phone, PC, speaker), with **synced lyrics** from LRCLIB, and controls it: **A** previous, **B** play/pause, **C** next. **Hold B** (0.7 s) = back to the menu. The screen stays on while you are in this mode. Needs Spotify **Premium** for the buttons (viewing works without) and the Wi-Fi from `secrets.h`. Spotify itself must be playing somewhere; the keychain is a remote, not a speaker.
 
 One-time setup (on your PC):
 1. https://developer.spotify.com/dashboard -> Create app (any name, Web API). Add the Redirect URI exactly `http://127.0.0.1:8888/callback`. Copy the Client ID.
@@ -135,7 +135,7 @@ When changing wiring, update `src/config.h` first.
 - [x] Verify current firmware on hardware
 - [ ] Try the RoboEyes library for the eyes (optional, only if the current look is not liked)
 - [x] Temperature mode
-- [x] Game mode (Magic 8-ball + Dice)\n- [x] Mini-games (Snake, Flappy, generated Tilt Maze, Dino Runner with jump/crouch and varied obstacles)\n- [x] Touch pad as Home control outside Pet mode\n- [x] Optional Wi-Fi NTP clock (credentials must be configured locally in ignored `src/secrets.h`)
+- [x] Game mode (Magic 8-ball + Dice)\n- [x] Mini-games (Snake, Flappy, generated Tilt Maze, Dino Runner with jump/crouch and varied obstacles)\n- [x] Touch pad (Pet mode only)\n- [x] Optional Wi-Fi NTP clock (credentials must be configured locally in ignored `src/secrets.h`)
 - [x] Wi-Fi NTP clock
 - [x] Online mode: weather, forecast, AQI, currency, world clocks, fact, advice, moon, net status, ISS, GitHub (in code, host-checked, not yet tested on the device)
 - [ ] Pet sleeps at night

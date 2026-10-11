@@ -636,12 +636,12 @@ void draw(U8G2 &d, uint32_t now) {
     d.drawHLine(0, 17, 128);
     d.setFont(u8g2_font_6x10_tf);
     for (int i = 0; i < n; i++) centered(d, 32 + i * 11, row[i]);
-    if (strstr(errMsg, "Cannot")) { d.setFont(u8g2_font_5x7_tf); centered(d, 62, "B retry  Touch=Home"); }
-    else { d.setFont(u8g2_font_5x7_tf); centered(d, 62, "Touch = Home"); }
+    if (strstr(errMsg, "Cannot")) { d.setFont(u8g2_font_5x7_tf); centered(d, 62, "B retry  Hold B=Home"); }
+    else { d.setFont(u8g2_font_5x7_tf); centered(d, 62, "Hold B = Home"); }
     return;
   }
-  if (phase == P_WIFI) { drawStatus(d, online::wifiStatusText(), "...", "B retry  Touch=Home"); return; }
-  if (phase == P_LOGIN) { drawStatus(d, "logging in", "to Spotify...", "Touch = Home"); return; }
+  if (phase == P_WIFI) { drawStatus(d, online::wifiStatusText(), "...", "B retry  Hold B=Home"); return; }
+  if (phase == P_LOGIN) { drawStatus(d, "logging in", "to Spotify...", "Hold B = Home"); return; }
   if (!haveTrack) {
     drawStatus(d, nothing ? "Nothing playing" : "Asking Spotify...", nothing ? "B = resume" : "", "open Spotify on a device");
     if (note[0] && (int32_t)(noteUntil - now) > 0) { d.setFont(u8g2_font_5x7_tf); d.setDrawColor(0); d.drawBox(0, 54, 128, 10); d.setDrawColor(1); centered(d, 62, note); }
