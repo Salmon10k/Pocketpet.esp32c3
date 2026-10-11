@@ -34,7 +34,33 @@ The physical wiring did not change when the I2C roles were swapped. Only the dri
 ## Current firmware
 
 ### Menu
-Pet, Fluid, Stats, Motion test, Tools, Games, Online, Settings (brightness, screen auto-off, flip screen, reset pet). Tools contains Temperature. Games contains Magic 8-ball, Dice, Snake, Flappy, procedurally generated Tilt Maze maps, and an upgraded Dino Runner with jumping, crouching, cactus clusters and flying birds. Online is a Wi-Fi NTP clock (copy `src/secrets.example.h` to `src/secrets.h` and set `WIFI_SSID` / `WIFI_PASSWORD` locally first). It displays local Pakistan time after syncing. Wi-Fi stays off until you enter Online. Outside Pet mode, touching the pad returns to the main menu.
+Pet, Fluid, Stats, Motion test, Tools, Games, Online, Settings (brightness, screen auto-off, flip screen, reset pet). Tools contains Temperature. Games contains Magic 8-ball, Dice, Snake, Flappy, procedurally generated Tilt Maze maps, and an upgraded Dino Runner with jumping, crouching, cactus clusters and flying birds. Online has 12 screens that need the internet (see below). Copy `src/secrets.example.h` to `src/secrets.h` and set `WIFI_SSID` / `WIFI_PASSWORD` locally first. Outside Pet mode, touching the pad returns to the main menu.
+
+### Online mode
+Wi-Fi stays **off** until a screen needs it. The radio connects, fetches, caches the result in RAM, and switches itself off about 6 seconds later. Every screen shows how old its data is (top right). If a refresh fails you keep the last good data.
+
+Controls: in the list, A/C move and B opens. On a screen, **A = refresh**, **C = next screen**, **B = back to the list**, touch = Home.
+
+| Screen | Source (no API keys) | Refreshes |
+|--------|----------------------|-----------|
+| Clock | NTP (`pool.ntp.org`), keeps ticking offline | on open if never synced, resync every 6 h |
+| Weather | Open-Meteo | 30 min |
+| Forecast | same request as Weather | 30 min |
+| Air quality | Open-Meteo air quality (US AQI, PM2.5) | 30 min |
+| Currency | open.er-api.com (USD to `CURRENCY_HOME`, EUR, GBP) | 6 h |
+| World clocks | computed from NTP time, with DST rules for London, New York, Tokyo, Sydney | no request |
+| Random fact | uselessfacts.jsph.pl | A only |
+| Advice | adviceslip.com | A only |
+| Moon phase | calculated from the date (approximate, within about a day) | no request |
+| Net status | RSSI, IP, a `generate_204` check with ping time | every open |
+| ISS tracker | api.open-notify.org (plain HTTP) | 1 min |
+| GitHub | api.github.com stars, forks, issues, last push | 10 min |
+
+Location for weather and air quality comes from an IP lookup (ip-api.com) unless you set `LOCATION_LAT` / `LOCATION_LON` in `secrets.h`. See `src/secrets.example.h` for all optional overrides.
+
+**Pet reactions:** when cached data exists, Pet mode shows tiny corner icons: sweat drop (35 C or hotter), umbrella (rain chance 60% or more), cloud (AQI 150 or more), moon (after sunset). Each successful fetch also gives the pet a small happiness bump.
+
+Requests are blocking with a 5 second timeout, so the screen can pause briefly while one runs. A "Fetching..." frame is drawn first so it never looks frozen.
 
 ### Fluid mode
 Particle water simulation that follows tilt. Hold the device like a phone, it calibrates for half a second (that pose counts as level). A = re-zero, C = Water / Honey / Mercury, B = back.
@@ -59,7 +85,7 @@ Happiness and energy are saved to flash (about every 2 minutes when they changed
 ## Build
 
 1. Install PlatformIO in VS Code.
-2. Open this folder (it will download U8g2, SoftWire and AsyncDelay).
+2. Open this folder (it will download U8g2, SoftWire, AsyncDelay and ArduinoJson).
 3. Plug the ESP32-C3 Super Mini in with a data-capable USB cable.
 4. Build and upload with PlatformIO.
 5. Board environment: `esp32-c3-supermini`.
@@ -67,6 +93,7 @@ Happiness and energy are saved to flash (about every 2 minutes when they changed
 
 ## Files
 - `src/main.cpp` -> main firmware and pet logic
+- `src/online.h` / `src/online.cpp` -> Online mode (Wi-Fi state machine, request cache, the 12 screens)
 - `src/config.h` -> all GPIO assignments, I2C addresses and pet tuning
 - `platformio.ini` -> PlatformIO build configuration
 
@@ -91,7 +118,9 @@ When changing wiring, update `src/config.h` first.
 - [ ] Try the RoboEyes library for the eyes (optional, only if the current look is not liked)
 - [x] Temperature mode
 - [x] Game mode (Magic 8-ball + Dice)\n- [x] Mini-games (Snake, Flappy, generated Tilt Maze, Dino Runner with jump/crouch and varied obstacles)\n- [x] Touch pad as Home control outside Pet mode\n- [x] Optional Wi-Fi NTP clock (credentials must be configured locally in ignored `src/secrets.h`)
-- [x] Wi-Fi NTP clock\n- [ ] Pet sleeps at night
+- [x] Wi-Fi NTP clock
+- [x] Online mode: weather, forecast, AQI, currency, world clocks, fact, advice, moon, net status, ISS, GitHub (in code, host-checked, not yet tested on the device)
+- [ ] Pet sleeps at night
 - [ ] Battery monitoring (GPIO3 divider)
 - [ ] Deep sleep / wake on touch
 

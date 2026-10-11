@@ -24,6 +24,7 @@ GPIO 8/9 are strapping pins, GPIO 0-5 are the only deep-sleep wake pins on the C
 
 ## Source layout
 - `src/config.h`: pins, addresses, timing and tuning macros.
+- `src/online.h` / `src/online.cpp`: the whole Online mode. Own state (Wi-Fi state machine, per-request cache, 12 screens). main.cpp only calls `online::enter/leave/tick/input/draw/drawPetBadge/takeTreats`. See "Online mode" below.
 - `src/main.cpp`: current firmware, hardware init, input handling, MPU, stats, pet animation/drawing, menus and mini-games, shared tilt helper, Tilt Maze, Fluid glue.
 - `src/fluid.h` / `src/fluid.cpp`: fixed-point particle fluid (no Arduino deps, also compiled on PC by `tools/fluidtest/`).
 - `tools/fluidtest/`: host harness (`fluidtest.cpp` + `render.py` PNG contact sheets) for tuning the fluid without hardware.
@@ -73,13 +74,36 @@ Salman confirms on the device.
 | Fluid main mode (root menu item 2), 3 presets | DONE in code + host-checked + host-rendered; needs Salman hardware confirmation (FPS, tilt feel) |
 | Tilt Maze rewrite (fixed 20 ms physics, shared tilt helper) | DONE in code + host-checked; needs hardware confirmation |
 | Pomodoro + Stopwatch | TODO (batch 3) |
-| Wi-Fi NTP clock | DONE in code, needs local credentials and hardware confirmation |\n| Weather (Open-Meteo), pet sleeps at night | TODO |
+| Online mode (12 screens: Clock, Weather, Forecast, Air quality, Currency, World clocks, Fact, Advice, Moon, Net status, ISS, GitHub) | DONE in code + host-checked; needs Salman hardware confirmation (never compiled for the chip) |
+| Pet corner badges from Online data (hot, rain, smog, night) | DONE in code, needs hardware confirmation |
+| Pet sleeps at night | TODO (Online already stores `is_day`, see `online::petHint()`) |
 | Spirit level, Step counter | TODO (batch 5) |
 | BLE shutter remote | SKIPPED by Salman for now (do not build unless asked) |
 | Battery monitoring (GPIO3 divider), deep sleep + wake on touch | NOT STARTED, needs hardware first |
 
 ## Currently working on
-Fluid mode + Tilt Maze rewrite just landed (host syntax check passes, nothing flashed yet). Next: Salman tests them, then Pomodoro/Stopwatch, Weather, Spirit level, Step counter.
+Online mode just landed (host syntax check passes, nothing compiled for the chip or flashed). Next: Salman flashes it and reports, then Pomodoro/Stopwatch, Spirit level, Step counter.
+
+### Online mode (online.cpp)
+- **Items vs jobs.** 12 screens ("items") map to 10 network "jobs" (geo, weather, aqi, currency, fact, advice, net, iss, crew, github). Forecast reuses the weather job; Clock/World/Moon only need NTP time.
+- **Radio policy.** Wi-Fi is off in the list and in Pet mode. Opening a stale screen queues its jobs and starts the connect. `tick()` runs at most one request per call, only after a frame was drawn ("Fetching..." shows first). Radio goes off 6 s after the last request (kept on while on Net status, or while waiting up to 15 s for NTP). `leave()` turns it off at once.
+- **Time.** System time is UTC (`configTime(0,0,...)`), then `TZ` is set from `LOCAL_TZ` (default `PKT-5`). Clock keeps ticking with the radio off. World clocks compute offsets with their own DST rules (EU, US, AU). Do not call `configTime` elsewhere with an offset, it resets TZ.
+- **Cache.** Each job has `at/has/err/http`. Failed refresh keeps old data and shows `!` in the header tag. Intervals live in `JOB_EVERY[]`.
+- **Location.** `LOCATION_LAT/LON/NAME` in secrets.h, else one IP lookup per boot (ip-api.com, HTTP). No city or coordinates are committed.
+- **Controls inside a screen.** A = refresh (ignored within 1.5 s of the last one), C = next screen, B = back to list, touch = Home (existing global rule).
+- **Pet hook.** `online::petHint()` reads cached data only; `drawPetBadge()` is drawn after `drawPet()` in main.cpp, `drawPet()` itself is untouched. `takeTreats()` gives +1 happiness per successful fetch.
+- **Known approximations.** Moon phase uses the mean synodic month (can be off by up to about a day). `setInsecure()` TLS. ISS/crew use open-notify (HTTP only, free service, may be down; failure just shows "Couldn't load").
+
+### What Salman should test on the device (Online)
+1. Build with PlatformIO (it will download ArduinoJson). Send me the build output if it fails; I could not compile for the chip.
+2. Copy `src/secrets.example.h` to `src/secrets.h`, set SSID + password, flash.
+3. Online > Clock: connects, shows PKT time. Leave the screen idle: radio should switch off after a few seconds but the seconds keep ticking.
+4. Weather / Forecast / Air quality: city comes from the IP lookup, values look sane. Press A to refresh.
+5. Currency, World clocks (compare with a phone), Moon, Net status (RSSI, IP, ping), ISS dot moves between refreshes, GitHub shows your repo.
+6. Fact / Advice: A gives a new one, long ones scroll.
+7. With Wi-Fi off or a wrong password: a screen should say "Couldn't load / No Wi-Fi", not freeze.
+8. Pet mode after fetching weather: no icon is normal unless it is 35 C+, rainy, AQI 150+ or night.
+9. Free heap / flash: check the PlatformIO memory summary after the build and tell the next agent.
 
 ### Tilt helper (main.cpp, `tiltBegin()` / `tiltUpdate()`)
 On entering Tilt Maze or Fluid it averages 25 MPU samples ("Hold like a phone..." banner) and derives screen-down/right axes from gravity itself, so it works for any MPU mounting. Neutral pose = however a phone is held. Maze uses relative tilt (`tilt.tx/ty`), Fluid uses normalised in-plane gravity (`tilt.gx/gy`, neutral = (0,1)). If the device is held nearly flat it falls back to `TILT_X_SIGN/TILT_Y_SIGN`. Button A in both modes re-zeroes.

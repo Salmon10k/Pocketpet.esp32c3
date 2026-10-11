@@ -3,16 +3,9 @@
 #include <SoftWire.h>
 #include <U8g2lib.h>
 #include <Preferences.h>
-#include <WiFi.h>
-#include <time.h>
 #include "config.h"
 #include "fluid.h"
-#if __has_include("secrets.h")
-#include "secrets.h"
-#else
-#define WIFI_SSID ""
-#define WIFI_PASSWORD ""
-#endif
+#include "online.h"
 
 // OLED: 1.3" SH1106 on hardware I2C (SDA = GPIO 8, SCL = GPIO 9).
 U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
@@ -581,8 +574,6 @@ const char *toolsItems[] = {"Temperature"};
 const int TOOLS_COUNT = 1;
 const char *gamesItems[] = {"Magic 8-ball", "Dice", "Snake", "Flappy", "Tilt Maze", "Dino Runner", "Catch Water"};
 const int GAMES_COUNT = 7;
-const char *onlineItems[] = {"Wi-Fi clock"};
-const int ONLINE_COUNT = 1;
 
 int menuIndex = 0;
 int submenuIndex = 0;
@@ -594,55 +585,6 @@ const char *eightBallAnswers[] = {
 const int EIGHT_BALL_COUNT = 8;
 int eightBallIndex = 0;
 int diceValue = 1;
-
-// ---------------- Online clock ----------------
-bool clockWifiStarted = false;
-uint32_t clockConnectStarted = 0;
-void startOnlineClock() {
-  if (clockWifiStarted) return;
-  clockWifiStarted = true;
-  clockConnectStarted = millis();
-  if (strlen(WIFI_SSID) == 0) return;
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  setenv("TZ", "PKT-5", 1); tzset();
-  configTime(18000, 0, "pool.ntp.org", "time.google.com");
-}
-void drawOnlineClock() {
-  display.setFont(u8g2_font_7x13B_tf);
-  display.drawStr(0, 12, "POCKET CLOCK");
-  display.drawHLine(0, 15, 128);
-  display.setFont(u8g2_font_5x7_tf);
-  if (strlen(WIFI_SSID) == 0) {
-    display.drawStr(0, 28, "Copy secrets.example.h to secrets.h");
-    display.drawStr(0, 40, "SSID + password needed");
-    display.drawStr(0, 61, "B back  Touch home");
-    return;
-  }
-  if (WiFi.status() != WL_CONNECTED) {
-    display.drawStr(0, 29, "Connecting to Wi-Fi...");
-    display.drawStr(0, 42, WiFi.status() == WL_CONNECT_FAILED ? "Connection failed" : "Waiting for network");
-    display.drawStr(0, 61, "B back  Touch home");
-    return;
-  }
-  time_t nowTime = time(nullptr);
-  if (nowTime < 1700000000) {
-    display.drawStr(0, 26, "Wi-Fi connected");
-    display.drawStr(0, 38, "Syncing time from NTP...");
-  } else {
-    struct tm tmNow;
-    localtime_r(&nowTime, &tmNow);
-    char clockLine[16], dateLine[24];
-    strftime(clockLine, sizeof(clockLine), "%H:%M:%S", &tmNow);
-    strftime(dateLine, sizeof(dateLine), "%a %d %b %Y", &tmNow);
-    display.setFont(u8g2_font_logisoso24_tn);
-    display.drawStr(10, 44, clockLine);
-    display.setFont(u8g2_font_6x10_tf);
-    display.drawStr(18, 56, dateLine);
-  }
-  display.setFont(u8g2_font_5x7_tf);
-  display.drawStr(0, 63, "NTP  UTC+5  B back");
-}
 
 // ---------------- Mini-game state ----------------
 // All games are original, compact monochrome adaptations for the 128x64 OLED.
@@ -1238,10 +1180,6 @@ void drawGamesMenu() {
   drawMenuList("GAMES", gamesItems, GAMES_COUNT, submenuIndex);
 }
 
-void drawOnlineMenu() {
-  drawMenuList("ONLINE", onlineItems, ONLINE_COUNT, submenuIndex);
-}
-
 void drawBar(int y, const char *label, float value) {
   char num[8];
   display.setFont(u8g2_font_6x10_tf);
@@ -1376,6 +1314,7 @@ void drawDice() {
 
 void enterMode(Mode m) {
   if (mode == MODE_PET && m != MODE_PET) saveStats(true);
+  if (mode == MODE_ONLINE && m != MODE_ONLINE) online::leave();   // radio off, cancel requests
   mode = m;
 
   if (m == MODE_PET) {
@@ -1384,7 +1323,7 @@ void enterMode(Mode m) {
     lastInteraction = now;
     overlay = OV_NONE;
   }
-  if (m == MODE_ONLINE) startOnlineClock();
+  if (m == MODE_ONLINE) online::enter();
   if (m == MODE_SETTINGS) { settingsRow = 0; resetArmed = false; }
   if (m == MODE_8BALL) eightBallIndex = random(EIGHT_BALL_COUNT);
   if (m == MODE_DICE) diceValue = random(1, 7);
@@ -1497,6 +1436,8 @@ void loop() {
   }
 
   gameTick(now);
+  online::tick(now);
+  for (int t = online::takeTreats(); t > 0; t--) addHappy(1);   // each successful fetch is a small treat
 
   // Every 2 seconds: recover the MPU and the OLED if either one dropped out.
   if (now - lastCheck >= 2000) {
@@ -1657,7 +1598,7 @@ void loop() {
       } else enterMode(MODE_MENU);
     }
   } else if (mode == MODE_ONLINE) {
-    if (b) enterMode(MODE_MENU);
+    if (online::input(a, b, c, now)) enterMode(MODE_MENU);
   } else if (mode == MODE_PET) {
     if (b) enterMode(MODE_MENU);
     if (a) {            // tickle
@@ -1722,6 +1663,7 @@ void loop() {
       drawMenu();
     } else if (mode == MODE_PET) {
       drawPet(now);
+      online::drawPetBadge(display);   // tiny weather/air/night icons from cached Online data
     } else if (mode == MODE_STATS) {
       drawStats();
     } else if (mode == MODE_MOTION) {
@@ -1733,7 +1675,7 @@ void loop() {
     } else if (mode == MODE_SETTINGS) {
       drawSettings(now);
     } else if (mode == MODE_ONLINE) {
-      drawOnlineClock();
+      online::draw(display, now);
     } else if (mode == MODE_TEMP) {
       drawTemperature();
     } else if (mode == MODE_8BALL) {
