@@ -201,3 +201,41 @@ Brightness (contrast 8/60/150/255), Screen auto-off (Off/30 s/1 min/5 min; wakes
 
 ## Ideas not yet approved
 Reaction test, Simon, Dino runner, Breakout, pet reacting to weather, morning greeting, deep sleep.
+
+
+### Lyrics Visual mode (2026-10-11; standalone Reel-inspired mode)
+
+**Goal:** add a completely separate Spotify lyrics-only visual mode inspired by the uploaded Reel. The existing Spotify mode is frozen and was not modified.
+
+**Exact files changed**
+- `src/lyrics_visual.cpp`
+  - New standalone Spotify/LRCLIB client and nonblocking FreeRTOS network worker.
+  - Reuses the existing Spotify credentials/NVS refresh-token convention, but keeps its own state.
+  - Polls the currently playing track, fetches synced LRCLIB lyrics, and estimates word timing by dividing each LRC line duration across its words.
+  - Draws only the lyric word plus procedural monochrome geometric art: boxed word, diamonds, rings, perspective lines, crossing geometry and small orbit dots.
+  - Four visual patterns rotate by lyric/word index.
+  - No title, artist, progress bar, or normal Spotify controls are drawn.
+  - B exits the mode through the main menu; the mode itself does not modify playback.
+- `src/lyrics_visual.h`
+  - New standalone mode API.
+- `src/main.cpp`
+  - Adds a new root item, `Lyrics Visual`, as its own mode.
+  - Calls the new module's enter/tick/draw lifecycle.
+  - Keeps screen auto-off disabled while the new mode is open.
+  - Existing `MODE_SPOTIFY` dispatch and Spotify source files are unchanged.
+
+**Important boundary:** `src/spotify.cpp` and `src/spotify.h` were not changed for this feature. The existing animated Spotify lyrics screen remains untouched.
+
+**Current implementation status:** code is committed on branch `lyrics-visual-mode`. PlatformIO ESP32-C3 build and hardware validation have not been run by the agent. The host-check script was not executable in this environment, so this needs a PlatformIO build before treating it as DONE.
+
+**First device test**
+1. Build/flash from branch `lyrics-visual-mode`.
+2. Root menu -> Lyrics Visual.
+3. Start a Spotify song with synced LRCLIB lyrics.
+4. Confirm the screen shows one large lyric word at a time with changing geometric art and no normal Spotify UI.
+5. Confirm the word sequence follows the song reasonably closely.
+6. Press B and confirm it returns to the root menu and Wi-Fi is released.
+7. Then open the normal Spotify mode and verify its existing animated lyrics screen is unchanged.
+
+**Rollback:** the clean pre-feature point is `09e46003c05f1fab6c246a077956230148d06b3b`. Reverting the three feature commits on `lyrics-visual-mode` restores the previous firmware. Do not revert the earlier Spotify worker/visual commits.
+
