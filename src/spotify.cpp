@@ -672,6 +672,32 @@ bool active() {
   return isOpen;
 }
 
+// A read-only snapshot for the separate lyrics visualizer. The established Spotify renderer
+// remains independent: this function only copies data while holding the state mutex.
+bool getLyricsView(LyricsView &out, uint32_t now) {
+  memset(&out, 0, sizeof(out));
+  StateGuard guard;
+  out.haveTrack = haveTrack;
+  out.playing = playing;
+  out.positionMs = position(now);
+  out.durationMs = durMs;
+  if (!haveTrack || lyr != L_HAVE || lineCount <= 0) return true;
+
+  const uint32_t targetTime = out.positionMs + LYRIC_LEAD_MS;
+  int target = -1;
+  for (int i = 0; i < lineCount && lines[i].ms <= targetTime; ++i) target = i;
+  if (target < 0 || !pool[lines[target].off]) return true;
+
+  out.lyricsReady = true;
+  strncpy(out.line, pool + lines[target].off, sizeof(out.line) - 1);
+  out.lineStartMs = lines[target].ms;
+  out.lineEndMs = target + 1 < lineCount ? lines[target + 1].ms : lines[target].ms + 4000;
+  if (target + 1 < lineCount && pool[lines[target + 1].off]) {
+    strncpy(out.nextLine, pool + lines[target + 1].off, sizeof(out.nextLine) - 1);
+  }
+  return true;
+}
+
 void enter() {
   if (!ensureNetworkWorker()) {
     StateGuard guard;
