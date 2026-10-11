@@ -14,6 +14,12 @@
 #define OUTPUT 1
 #define INPUT_PULLUP 2
 #define OUTPUT_OPEN_DRAIN 3
+// Real Arduino macros that bite when a function or variable reuses the name:
+#define bit(b) (1UL << (b))
+#define bitRead(v,b) (((v) >> (b)) & 0x01)
+#define sq(x) ((x)*(x))
+#define lowByte(w) ((uint8_t)((w) & 0xff))
+#define highByte(w) ((uint8_t)((w) >> 8))
 #define PROGMEM
 #define PSTR(x) x
 #define pgm_read_byte(a) (*(const uint8_t*)(a))

@@ -47,7 +47,7 @@ const char *const ITEM_NAMES[IT_COUNT] = {
 const int LIST_COUNT = IT_COUNT + 1;           // + "Back"
 
 enum Job : uint8_t { J_GEO, J_WEATHER, J_AQI, J_CUR, J_FACT, J_ADVICE, J_NET, J_ISS, J_CREW, J_GITHUB, J_COUNT };
-inline uint16_t bit(int j) { return (uint16_t)(1u << j); }
+inline uint16_t jbit(int j) { return (uint16_t)(1u << j); }
 
 // How old cached data may get before opening the screen refetches it.
 const uint32_t JOB_EVERY[J_COUNT] = {
@@ -248,7 +248,7 @@ void ensureNet(uint32_t now) {
 
 void failPending(uint8_t err) {
   for (int j = 0; j < J_COUNT; j++)
-    if (pending & bit(j)) jobs[j].err = err;
+    if (pending & jbit(j)) jobs[j].err = err;
   pending = 0;
   needTime = false;
 }
@@ -476,14 +476,14 @@ uint8_t runJob(int j) {
 uint16_t itemJobs(int it) {
   switch (it) {
     case IT_WEATHER:
-    case IT_FORECAST: return bit(J_WEATHER);
-    case IT_AQI: return bit(J_AQI);
-    case IT_CURRENCY: return bit(J_CUR);
-    case IT_FACT: return bit(J_FACT);
-    case IT_ADVICE: return bit(J_ADVICE);
-    case IT_NET: return bit(J_NET);
-    case IT_ISS: return bit(J_ISS) | bit(J_CREW);
-    case IT_GITHUB: return bit(J_GITHUB);
+    case IT_FORECAST: return jbit(J_WEATHER);
+    case IT_AQI: return jbit(J_AQI);
+    case IT_CURRENCY: return jbit(J_CUR);
+    case IT_FACT: return jbit(J_FACT);
+    case IT_ADVICE: return jbit(J_ADVICE);
+    case IT_NET: return jbit(J_NET);
+    case IT_ISS: return jbit(J_ISS) | jbit(J_CREW);
+    case IT_GITHUB: return jbit(J_GITHUB);
     default: return 0;
   }
 }
@@ -495,10 +495,10 @@ void requestFresh(int it, bool force, uint32_t now) {
   uint16_t mask = itemJobs(it);
   bool any = false;
   for (int j = 0; j < J_COUNT; j++) {
-    if (!(mask & bit(j)) || (pending & bit(j))) continue;
+    if (!(mask & jbit(j)) || (pending & jbit(j))) continue;
     bool want = !jobs[j].has || (JOB_EVERY[j] != NEVER && now - jobs[j].at >= JOB_EVERY[j]);
     if (force) want = !(jobs[j].has && now - jobs[j].at < 1500);        // A refreshes, but ignore button mashing
-    if (want) { pending |= bit(j); jobs[j].err = 0; any = true; }
+    if (want) { pending |= jbit(j); jobs[j].err = 0; any = true; }
   }
   if (itemNeedsTime(it) && (!timeValid() || force)) {
     needTime = true;
@@ -1008,7 +1008,7 @@ void tick(uint32_t now) {
     if (!drawnSince && (int32_t)(now - gate) < 0) return;      // wait for the "Fetching..." frame
     int pick = -1;
     for (int j = 0; j < J_COUNT; j++)
-      if (pending & bit(j)) { pick = j; break; }
+      if (pending & jbit(j)) { pick = j; break; }
     int run = pick;
     if ((pick == J_WEATHER || pick == J_AQI) && !haveLoc) run = J_GEO;
     uint8_t e = runJob(run);
@@ -1019,10 +1019,10 @@ void tick(uint32_t now) {
       if (run != J_GEO) treats++;
     }
     if (run == J_NET) jobs[J_NET].has = true;
-    if (run == pick) pending &= ~bit(pick);
+    if (run == pick) pending &= ~jbit(pick);
     else if (e) {                           // location lookup failed: the jobs waiting for it fail too
       jobs[pick].err = 4;
-      pending &= ~bit(pick);
+      pending &= ~jbit(pick);
     }
     lastNetUse = millis();
     queueGate(lastNetUse);
