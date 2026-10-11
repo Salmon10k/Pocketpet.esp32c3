@@ -107,6 +107,34 @@ Online mode just landed (host syntax check passes, nothing compiled for the chip
 8. Pet mode after fetching weather: no icon is normal unless it is 35 C+, rainy, AQI 150+ or night.
 9. Free heap / flash: check the PlatformIO memory summary after the build and tell the next agent.
 
+### Spotify lyric stutter fix (2026-10-11; not yet hardware-validated)
+
+**Goal:** keep lyric sliding/highlighting animated while Spotify or LRCLIB HTTPS requests are slow. The animation and its drawing algorithm were not changed.
+
+**Exact files changed for this fix**
+- `src/spotify.cpp`
+  - Added a persistent FreeRTOS task named `spotifyNet` with a 16 KB stack.
+  - `spotify::tick()` now queues one of four network jobs: login, now-playing poll, lyric lookup, or playback command. Those HTTPS calls run on `spotifyNet`, not the Arduino loop that draws the OLED.
+  - Added a recursive mutex around short shared-state operations and the Spotify draw/input functions. The mutex is not held during HTTP requests.
+  - Added a session-generation counter so responses that finish after leaving/re-entering Spotify are discarded.
+  - The TLS client is now owned/cleaned up by the worker. `leave()` no longer calls `sec.stop()` while a request could be using the client.
+  - Existing lyric animations, timings, fonts, line parsing, poll intervals, credentials, controls, and network endpoints were left as they were.
+- `tools/hostcheck/freertos/FreeRTOS.h`, `task.h`, `semphr.h`
+  - Added syntax-only mocks for the task and recursive-mutex APIs. They are not real FreeRTOS implementations and do not test scheduling.
+- `HANDOFF.md`
+  - This rollback/change note only.
+
+**Not changed:** `src/main.cpp`, `src/online.cpp`, `src/spotify.h`, `src/config.h`, README, pin assignments, pet animation code, or secrets.
+
+**Validation status:** source changes are committed, but a PlatformIO ESP32-C3 build and on-device playback test have **not** been run by the agent. Host syntax checks are useful but cannot confirm task stack sizing, heap headroom, Wi-Fi behavior, or race-free playback on hardware. First test: build with PlatformIO, flash, then watch whether lyrics keep animating during a poll and during a track change. If the screen says `Network task unavailable`, the worker task or mutex could not be created.
+
+**Commits in this change**
+- Spotify worker/state-locking implementation: `aeea5775ee4005358710d89c6ea9d4e02b13987f`
+- Host-check mock headers: `f4208e5f4561731020b57d1535936d9882cb83d3`, `e96ad10dbbe40e473b74e79b94f6b71aff11e7eb`, `0496876a6007b276334382a86e0ff30719d19704`
+- Pre-change rollback point: `d94f61cb9bf372f5fc9533e8a86e69632073006f`
+
+**Rollback:** use `git revert --no-edit` on the commits above in reverse order, including the HANDOFF note commit once its SHA is recorded in the commit history. The simplest clean reference for the original animated-lyrics code is `d94f61cb9bf372f5fc9533e8a86e69632073006f`. Do not reset/force-push if there are later commits you want to keep.
+
 ### Spotify mode (spotify.cpp)
 - Auth: refresh token (from secrets.h, rotated copy kept in NVS namespace `spotify`, ignored when secrets.h holds a different token) -> access token (1 h) refreshed quietly. 400/401 on refresh = "Login expired".
 - Polls `GET /v1/me/player/currently-playing` every 4 s (8 s paused), interpolates the progress between polls. Commands (play/pause/next/previous) are blocking requests run from tick() after one frame is drawn; the pause button flips the UI optimistically and undoes it on failure. 403 = no Premium, 404 = no active device.
