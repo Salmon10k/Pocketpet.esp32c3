@@ -414,7 +414,6 @@ void poll(uint32_t now) {
   uint32_t requestAt = millis();
   Reply r = request("api.spotify.com", "GET", "/v1/me/player/currently-playing", accessToken, nullptr, true);
   uint32_t t1 = millis();
-  lastPollRttMs = t1 - requestAt;
   StateGuard guard;
   if (!currentWorkLocked()) return;
   if (r.code == 401) { haveToken = false; return; }
@@ -441,6 +440,7 @@ void poll(uint32_t now) {
   fi["album"]["name"] = true;
   fi["show"]["name"] = true;
   if (deserializeJson(doc, r.body.c_str(), DeserializationOption::Filter(f))) { nextPoll = t1 + 4000; return; }
+  lastPollRttMs = t1 - requestAt;
   nothing = false;
   playing = doc["is_playing"] | false;
   progMs = doc["progress_ms"] | 0;
