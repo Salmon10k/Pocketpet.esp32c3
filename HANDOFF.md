@@ -201,3 +201,26 @@ Brightness (contrast 8/60/150/255), Screen auto-off (Off/30 s/1 min/5 min; wakes
 
 ## Ideas not yet approved
 Reaction test, Simon, Dino runner, Breakout, pet reacting to weather, morning greeting, deep sleep.
+
+
+### Separate Spotify lyrics visualizer (2026-10-11; first implementation, hardware review pending)
+
+**Hard boundary:** the established Spotify animated-lyrics renderer is frozen. This feature adds a separate root-menu mode named **Lyrics visual**. The existing `spotify::draw()` implementation and its layout/animation code were not edited.
+
+**Implementation**
+- Added `src/lyrics_visual.h/.cpp`, an independent 128x64 renderer inspired by the reference Reel: one lyric word at a time, a thin outlined word box, and procedural monochrome geometry that rotates between ring, waveform, equalizer-bar, and scribble motifs. During lyric gaps or loading, it shows only a quiet abstract interlude, without song title/artist/status labels.
+- Added a read-only `spotify::getLyricsView()` snapshot API in `src/spotify.h/.cpp`. It copies the current synced line, next line, and timing while holding the existing state mutex. It does not draw anything and does not modify the old renderer.
+- Added `Lyrics visual` as its own root menu item in `src/main.cpp`. It uses the same Spotify session, Wi-Fi worker, LRCLIB synced lyrics, and playback controls. A/C skip tracks; short B toggles play/pause; hold B returns to the root menu.
+- No pin, hardware, pet animation, game, or network implementation changes.
+
+**Files changed**
+- `src/lyrics_visual.h` (new)
+- `src/lyrics_visual.cpp` (new)
+- `src/spotify.h` (read-only snapshot declaration)
+- `src/spotify.cpp` (read-only snapshot implementation only; existing renderer left intact)
+- `src/main.cpp` (menu, mode lifecycle, input and draw dispatch)
+- `HANDOFF.md` (this note)
+
+**Validation:** not yet PlatformIO-built or tested on the device. This was committed to the feature branch `feature/lyrics-visualizer`, not directly to `main`. Please build in PlatformIO, flash, open **Lyrics visual** while Spotify is playing, and check: loading/lyric gaps, short words, long words, rapid word changes, A/C track skip, short B play/pause, and hold B exit. Also visit the original Spotify mode and confirm it remains visually unchanged.
+
+**Rollback:** the feature branch started at `09e46003c05f1fab6c246a077956230148d06b3b` (the pre-feature main commit). To abandon the experiment without touching the stable mode, switch back to `main` or delete `feature/lyrics-visualizer`. The feature branch commits are `efa5168339b9e6f84d191a8a1919083c98d5ee3a`, `5c2c15c26d35bf0b4eec385f44bb5ecd4535bc18`, `917ca88cac4093ae46600b1b157fcb16cc0f79e5`, `244f9b04a900f07ea9aa628e17e6e0fa31dd142c`, `a4fb749123d22b591d32ab683e88e65f78d495e2`, and `fdfe2a42b0315bd2248612de67113339397f5b30`.
