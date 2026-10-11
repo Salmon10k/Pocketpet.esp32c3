@@ -135,6 +135,26 @@ Online mode just landed (host syntax check passes, nothing compiled for the chip
 
 **Rollback:** use `git revert --no-edit` on the commits above in reverse order, including the HANDOFF note commit once its SHA is recorded in the commit history. The simplest clean reference for the original animated-lyrics code is `d94f61cb9bf372f5fc9533e8a86e69632073006f`. Do not reset/force-push if there are later commits you want to keep.
 
+### Spotify visual polish V2 (2026-10-11; review on hardware)
+
+**Goal:** give the 128x64 Spotify lyrics screen a calmer, more intentional hierarchy without changing its signature animated transitions.
+
+**Exact change**
+- File changed: `src/spotify.cpp` only for the implementation.
+- In `drawBig()`, removed the dotted/solid underline drawn under every lyric row. Word-by-word inverted highlighting remains unchanged, reducing visual clutter.
+- Added `drawNextPreview()`: upcoming lyric now has a small `NEXT` label, with text centered in a reserved right-hand area.
+- In `drawLocked()`, added a thin divider under the header and a divider above the upcoming-line preview.
+- Reworked the overall track progress line into a dotted unplayed rail, solid elapsed segment, and small vertical playhead.
+- No changes to HTTP/network worker, LRC parsing/timing, animation durations, lyrics fonts, input controls, `main.cpp`, `online.cpp`, hardware configuration, pet animations, or games.
+
+**Commit**
+- Visual polish: `55e2b7309434ca76495d61d5789ac503f6253267`
+- Pre-polish rollback point: `cb49a9592411ab5c74fb525116a606deed187798`
+
+**Validation:** no PlatformIO build or hardware check has been run for this visual-only change yet. Build and flash, then inspect short lyrics, long lyrics (2-3 rows), instrumental gaps, and the next-line preview. Confirm the new `NEXT` label does not overlap the incoming lyric during slide transitions and the bottom playhead is visible but not distracting.
+
+**Rollback if the appearance is worse:** revert `55e2b7309434ca76495d61d5789ac503f6253267` to restore the prior Spotify visuals while keeping the earlier non-blocking network worker. The following HANDOFF-only commit documents this change and can also be reverted; do not revert the network-worker commits unless intentionally rolling back the stutter fix too.
+
 ### Spotify mode (spotify.cpp)
 - Auth: refresh token (from secrets.h, rotated copy kept in NVS namespace `spotify`, ignored when secrets.h holds a different token) -> access token (1 h) refreshed quietly. 400/401 on refresh = "Login expired".
 - Polls `GET /v1/me/player/currently-playing` every 4 s (8 s paused), interpolates the progress between polls. Commands (play/pause/next/previous) are blocking requests run from tick() after one frame is drawn; the pause button flips the UI optimistically and undoes it on failure. 403 = no Premium, 404 = no active device.
