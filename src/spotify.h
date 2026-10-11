@@ -14,4 +14,18 @@ void input(bool a, bool b, bool c, uint32_t now);  // A previous, B play/pause, 
 void draw(U8G2 &d, uint32_t now);
 bool active();                                     // true while the mode is open (keeps the screen on)
 
+// Read-only lyric data for independent visualizers. This does not call or alter draw().
+struct LyricsView {
+  bool haveTrack;
+  bool lyricsReady;
+  bool playing;
+  uint32_t positionMs;
+  uint32_t durationMs;
+  uint32_t lineStartMs;
+  uint32_t lineEndMs;
+  char line[96];
+  char nextLine[96];
+};
+bool getLyricsView(LyricsView &out, uint32_t now);
+
 }  // namespace spotify
