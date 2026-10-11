@@ -7,6 +7,9 @@
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <string.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/semphr.h>
 #if __has_include("secrets.h")
 #include "secrets.h"
 #endif
@@ -193,6 +196,14 @@ int wrapText(const char *s, int cols, int maxLines, char out[][26]) {
 enum Phase : uint8_t { P_WIFI, P_LOGIN, P_RUN, P_ERROR };
 enum Lyr : uint8_t { L_NONE, L_WANT, L_HAVE, L_MISSING };
 enum Cmd : uint8_t { C_NONE, C_PLAY, C_PAUSE, C_NEXT, C_PREV };
+enum NetWork : uint8_t { NW_NONE, NW_LOGIN, NW_POLL, NW_LYRICS, NW_COMMAND };
+
+SemaphoreHandle_t stateMutex = nullptr;
+TaskHandle_t netTaskHandle = nullptr;
+NetWork pendingWork = NW_NONE;
+bool workerBusy = false;
+uint32_t sessionEpoch = 0;
+uint32_t activeWorkEpoch = 0;
 
 bool isOpen = false;
 Phase phase = P_WIFI;
@@ -200,6 +211,18 @@ char errMsg[40] = "";
 uint32_t drawnAt = 0;
 bool drawnSince = true;
 uint32_t gateUntil = 0;
+
+void lockState() {
+  if (stateMutex) xSemaphoreTakeRecursive(stateMutex, portMAX_DELAY);
+}
+void unlockState() {
+  if (stateMutex) xSemaphoreGiveRecursive(stateMutex);
+}
+struct StateGuard {
+  StateGuard() { lockState(); }
+  ~StateGuard() { unlockState(); }
+};
+bool currentWorkLocked() { return isOpen && activeWorkEpoch == sessionEpoch; }
 
 WiFiClientSecure sec;
 const char *secHost = "";
@@ -230,12 +253,14 @@ uint32_t tAt = 0, trackAt = 0;             // when the current line / the curren
 uint32_t noteUntil = 0;
 
 void setNote(const char *m, uint32_t now) {
+  StateGuard guard;
   strncpy(note, m, sizeof(note) - 1);
   note[sizeof(note) - 1] = 0;
   noteUntil = now + 3000;
 }
 
 void setError(const char *m) {
+  StateGuard guard;
   strncpy(errMsg, m, sizeof(errMsg) - 1);
   errMsg[sizeof(errMsg) - 1] = 0;
   phase = P_ERROR;
@@ -245,6 +270,7 @@ void setError(const char *m) {
 // A refresh token that Spotify rotates is kept in NVS. If you log in again on the PC (a new token in
 // secrets.h), the stored one is ignored: "base" remembers the tail of the secrets token it came from.
 void loadRefreshToken() {
+  StateGuard guard;
   strncpy(refreshTok, SPOTIFY_REFRESH_TOKEN, sizeof(refreshTok) - 1);
   refreshTok[sizeof(refreshTok) - 1] = 0;
   Preferences p;
@@ -315,9 +341,15 @@ Reply request(const char *host, const char *method, const char *path, const char
 // ---------------------------------------------------------------- Spotify calls
 bool login(uint32_t now) {
   char form[480];
-  snprintf(form, sizeof(form), "grant_type=refresh_token&refresh_token=%s&client_id=%s", refreshTok, SPOTIFY_CLIENT_ID);
+  {
+    StateGuard guard;
+    if (!currentWorkLocked()) return false;
+    snprintf(form, sizeof(form), "grant_type=refresh_token&refresh_token=%s&client_id=%s", refreshTok, SPOTIFY_CLIENT_ID);
+  }
   Reply r = request("accounts.spotify.com", "POST", "/api/token", nullptr, form, true);
-  if (r.code == 400 || r.code == 401) {            // refresh token revoked or expired
+  StateGuard guard;
+  if (!currentWorkLocked()) return false;
+  if (r.code == 400 || r.code == 401) {
     setError("Login expired. Run tools/spotify_auth.py");
     return false;
   }
@@ -342,10 +374,10 @@ bool login(uint32_t now) {
   }
   return true;
 }
-
 bool tokenOk(uint32_t now) { return haveToken && (int32_t)(tokenUntil - now) > 0; }
 
 void applyTrack(const char *id, const char *t, const char *al, const char *ar, const char *all, uint32_t dur) {
+  StateGuard guard;
   strncpy(trackId, id, sizeof(trackId) - 1);
   trackId[sizeof(trackId) - 1] = 0;
   strncpy(title, t, sizeof(title) - 1);   title[sizeof(title) - 1] = 0;
@@ -366,11 +398,20 @@ void applyTrack(const char *id, const char *t, const char *al, const char *ar, c
 }
 
 void poll(uint32_t now) {
-  Reply r = request("api.spotify.com", "GET", "/v1/me/player/currently-playing", token, nullptr, true);
+  char accessToken[sizeof(token)];
+  {
+    StateGuard guard;
+    if (!currentWorkLocked()) return;
+    strncpy(accessToken, token, sizeof(accessToken) - 1);
+    accessToken[sizeof(accessToken) - 1] = 0;
+  }
+  Reply r = request("api.spotify.com", "GET", "/v1/me/player/currently-playing", accessToken, nullptr, true);
   uint32_t t1 = millis();
-  if (r.code == 401) { haveToken = false; return; }                       // token expired early: log in again
+  StateGuard guard;
+  if (!currentWorkLocked()) return;
+  if (r.code == 401) { haveToken = false; return; }
   if (r.code == 429) { blockedUntil = t1 + 15000; nextPoll = t1 + 15000; return; }
-  if (r.code == 204) {                                                    // nothing playing anywhere
+  if (r.code == 204) {
     nothing = true; haveTrack = false; playing = false;
     trackId[0] = 0; lineCount = 0; lyr = L_NONE;
     nextPoll = t1 + POLL_PAUSED_MS;
@@ -424,67 +465,110 @@ void poll(uint32_t now) {
   }
   nextPoll = t1 + (playing ? POLL_PLAYING_MS : POLL_PAUSED_MS);
 }
-
 void sendCommand(uint32_t now) {
+  Cmd was = C_NONE;
+  char accessToken[sizeof(token)];
+  {
+    StateGuard guard;
+    if (!currentWorkLocked()) return;
+    was = cmd;
+    if (was == C_NONE) return;
+    cmd = C_NONE;
+    strncpy(accessToken, token, sizeof(accessToken) - 1);
+    accessToken[sizeof(accessToken) - 1] = 0;
+  }
   const char *method = "PUT", *path = "/v1/me/player/play";
-  if (cmd == C_PAUSE) path = "/v1/me/player/pause";
-  else if (cmd == C_NEXT) { method = "POST"; path = "/v1/me/player/next"; }
-  else if (cmd == C_PREV) { method = "POST"; path = "/v1/me/player/previous"; }
-  Cmd was = cmd;
-  cmd = C_NONE;
-  Reply r = request("api.spotify.com", method, path, token, nullptr, false);
+  if (was == C_PAUSE) path = "/v1/me/player/pause";
+  else if (was == C_NEXT) { method = "POST"; path = "/v1/me/player/next"; }
+  else if (was == C_PREV) { method = "POST"; path = "/v1/me/player/previous"; }
+  Reply r = request("api.spotify.com", method, path, accessToken, nullptr, false);
   uint32_t t1 = millis();
-  if (r.code == 401) { haveToken = false; cmd = was; cmdAt = t1; return; }   // log in again, then resend
+  StateGuard guard;
+  if (!currentWorkLocked()) return;
+  if (r.code == 401) {
+    haveToken = false;
+    if (cmd == C_NONE) { cmd = was; cmdAt = t1; }
+    return;
+  }
   if (r.code == 204 || r.code == 200 || r.code == 202) {
-    nextPoll = t1 + (was == C_NEXT || was == C_PREV ? 900 : 600);         // Spotify needs a moment before it reports the change
+    nextPoll = t1 + (was == C_NEXT || was == C_PREV ? 900 : 600);
     return;
   }
   if (r.code == 403) setNote("needs Premium", t1);
   else if (r.code == 404) setNote("open Spotify on a device", t1);
   else if (r.code == 429) { blockedUntil = t1 + 8000; setNote("slow down", t1); }
   else setNote("command failed", t1);
-  if (was == C_PLAY) playing = false;                                      // undo the optimistic flip
-  else if (was == C_PAUSE) playing = true;
+  if (cmd == C_NONE) {
+    if (was == C_PLAY) playing = false;
+    else if (was == C_PAUSE) playing = true;
+  }
   nextPoll = t1 + 300;
 }
-
 // ---------------------------------------------------------------- lyrics (LRCLIB)
-bool lyricsRequest(const char *titleForLookup, bool withAlbum, int &code) {
+bool lyricsRequest(const char *titleForLookup, const char *artistForLookup,
+                   const char *albumForLookup, uint32_t trackDurationMs,
+                   bool withAlbum, int &code) {
+  {
+    StateGuard guard;
+    if (!currentWorkLocked()) return false;
+  }
   char t[200], a[140], al[140], path[560];
-  if (!urlEncode(titleForLookup, t, sizeof(t)) || !urlEncode(artist, a, sizeof(a)) || !urlEncode(album, al, sizeof(al))) { code = -4; return false; }
-  int dur = (int)((durMs + 500) / 1000);
+  if (!urlEncode(titleForLookup, t, sizeof(t)) || !urlEncode(artistForLookup, a, sizeof(a)) ||
+      !urlEncode(albumForLookup, al, sizeof(al))) { code = -4; return false; }
+  int dur = (int)((trackDurationMs + 500) / 1000);
   if (withAlbum) snprintf(path, sizeof(path), "/api/get?artist_name=%s&track_name=%s&album_name=%s&duration=%d", a, t, al, dur);
   else snprintf(path, sizeof(path), "/api/get?artist_name=%s&track_name=%s&duration=%d", a, t, dur);
   Reply r = request("lrclib.net", "GET", path, nullptr, nullptr, true);
-  sec.stop();                                       // free the TLS buffers before parsing a big body
+  sec.stop();
   secHost = "";
   code = r.code;
+  {
+    StateGuard guard;
+    if (!currentWorkLocked()) return false;
+  }
   if (r.code != 200) return false;
   JsonDocument doc, f;
   f["syncedLyrics"] = true;
   if (deserializeJson(doc, r.body.c_str(), DeserializationOption::Filter(f))) { code = -5; return false; }
-  r.body = String();                                // drop the raw body before the parsed copy is used
+  r.body = String();
   const char *lrc = doc["syncedLyrics"] | "";
   if (!lrc[0]) { code = 404; return false; }
+  StateGuard guard;
+  if (!currentWorkLocked()) return false;
   return parseLrc(lrc) >= 2;
 }
 
 void fetchLyrics(uint32_t now) {
+  char trackTitle[96], trackArtist[64], trackAlbum[64];
+  uint32_t trackDurationMs = 0;
+  {
+    StateGuard guard;
+    if (!currentWorkLocked()) return;
+    strncpy(trackTitle, title, sizeof(trackTitle) - 1); trackTitle[sizeof(trackTitle) - 1] = 0;
+    strncpy(trackArtist, artist, sizeof(trackArtist) - 1); trackArtist[sizeof(trackArtist) - 1] = 0;
+    strncpy(trackAlbum, album, sizeof(trackAlbum) - 1); trackAlbum[sizeof(trackAlbum) - 1] = 0;
+    trackDurationMs = durMs;
+  }
   int code = 0;
-  bool ok = lyricsRequest(title, true, code);
+  bool ok = lyricsRequest(trackTitle, trackArtist, trackAlbum, trackDurationMs, true, code);
+  {
+    StateGuard guard;
+    if (!currentWorkLocked()) return;
+  }
   if (!ok && code == 404) {
     char clean[96];
-    cleanTitle(title, clean, sizeof(clean));
-    ok = lyricsRequest(clean, false, code);
+    cleanTitle(trackTitle, clean, sizeof(clean));
+    ok = lyricsRequest(clean, trackArtist, trackAlbum, trackDurationMs, false, code);
   }
+  StateGuard guard;
+  if (!currentWorkLocked()) return;
   curLine = -1;
   if (ok) { lyr = L_HAVE; return; }
   lineCount = 0;
-  if (code == 404) { lyr = L_MISSING; return; }                 // no synced lyrics for this song
-  if (++lyrTries >= 3) { lyr = L_MISSING; return; }              // network trouble: three goes, then give up
+  if (code == 404) { lyr = L_MISSING; return; }
+  if (++lyrTries >= 3) { lyr = L_MISSING; return; }
   lyrAt = now + 5000;
 }
-
 // ---------------------------------------------------------------- time helpers
 uint32_t position(uint32_t now) {
   uint32_t p = progMs;
@@ -498,100 +582,211 @@ void fmtTime(uint32_t ms, char *out) {
   snprintf(out, 8, "%lu:%02lu", (unsigned long)(s / 60), (unsigned long)(s % 60));
 }
 
+// Blocking network operations run on this worker, not on the display/input loop.
+// The mutex is held only for short state changes, never during an HTTP request.
+void spotifyNetworkTask(void *) {
+  for (;;) {
+    NetWork work = NW_NONE;
+    uint32_t epoch = 0;
+    {
+      StateGuard guard;
+      if (!workerBusy && pendingWork != NW_NONE) {
+        work = pendingWork;
+        pendingWork = NW_NONE;
+        workerBusy = true;
+        activeWorkEpoch = sessionEpoch;
+        epoch = activeWorkEpoch;
+      }
+    }
+    if (work == NW_NONE) {
+      vTaskDelay(pdMS_TO_TICKS(10));
+      continue;
+    }
+
+    bool run = false;
+    {
+      StateGuard guard;
+      run = isOpen && epoch == sessionEpoch;
+    }
+    if (run) {
+      switch (work) {
+        case NW_LOGIN: {
+          bool ok = login(millis());
+          StateGuard guard;
+          if (currentWorkLocked()) {
+            if (ok) {
+              phase = P_RUN;
+              loginFails = 0;
+              nextPoll = millis();
+            } else if (phase != P_ERROR && ++loginFails >= 6) {
+              setError("Cannot reach Spotify");
+            }
+          }
+          break;
+        }
+        case NW_POLL:    poll(millis()); break;
+        case NW_LYRICS:  fetchLyrics(millis()); break;
+        case NW_COMMAND: sendCommand(millis()); break;
+        default: break;
+      }
+    }
+
+    bool stale = false;
+    {
+      StateGuard guard;
+      stale = !isOpen || epoch != sessionEpoch;
+      workerBusy = false;
+      if (!stale) {
+        drawnSince = false;
+        gateUntil = millis() + 250;
+      }
+    }
+    // The TLS client belongs to this task. Clean it up here rather than racing leave().
+    if (stale) {
+      sec.stop();
+      secHost = "";
+    }
+    vTaskDelay(pdMS_TO_TICKS(1));
+  }
+}
+
+bool ensureNetworkWorker() {
+  if (!stateMutex) stateMutex = xSemaphoreCreateRecursiveMutex();
+  if (!stateMutex) return false;
+  if (!netTaskHandle) {
+    // Keep the TLS stack off loop(); give it the same generous stack budget it used before.
+    BaseType_t result = xTaskCreate(spotifyNetworkTask, "spotifyNet", 16384, nullptr, 1, &netTaskHandle);
+    if (result != pdPASS) {
+      netTaskHandle = nullptr;
+      return false;
+    }
+  }
+  return true;
+}
+
 }  // namespace
 
 // ================================================================ public API
-bool active() { return isOpen; }
+bool active() {
+  StateGuard guard;
+  return isOpen;
+}
 
 void enter() {
-  isOpen = true;
-  phase = P_WIFI;
-  errMsg[0] = 0;
-  haveToken = false;
-  haveTrack = false;
-  nothing = false;
-  playing = false;
-  trackId[0] = 0;
-  lineCount = 0;
-  lyr = L_NONE;
-  cmd = C_NONE;
-  note[0] = 0;
-  hinted = false;
-  blockedUntil = 0;
-  nextPoll = 0;
-  loginFails = 0;
-  secHost = "";
-  if (!configured) { setError("Add Spotify keys to secrets.h"); return; }
-  if (!online::wifiConfigured()) { setError("No Wi-Fi in secrets.h"); return; }
-  loadRefreshToken();
-  online::wifiAcquire(millis());
+  if (!ensureNetworkWorker()) {
+    StateGuard guard;
+    ++sessionEpoch;
+    isOpen = true;
+    setError("Network task unavailable");
+    return;
+  }
+  bool acquireWifi = false;
+  {
+    StateGuard guard;
+    ++sessionEpoch;
+    isOpen = true;
+    phase = P_WIFI;
+    errMsg[0] = 0;
+    haveToken = false;
+    haveTrack = false;
+    nothing = false;
+    playing = false;
+    trackId[0] = 0;
+    lineCount = 0;
+    lyr = L_NONE;
+    cmd = C_NONE;
+    note[0] = 0;
+    hinted = false;
+    blockedUntil = 0;
+    nextPoll = 0;
+    loginFails = 0;
+    pendingWork = NW_NONE;
+    drawnSince = true;
+    gateUntil = 0;
+    if (!configured) setError("Add Spotify keys to secrets.h");
+    else if (!online::wifiConfigured()) setError("No Wi-Fi in secrets.h");
+    else {
+      loadRefreshToken();
+      acquireWifi = true;
+    }
+  }
+  if (acquireWifi) online::wifiAcquire(millis());
 }
 
 void leave() {
-  isOpen = false;
-  sec.stop();
-  secHost = "";
-  token[0] = 0;
-  haveToken = false;
-  lineCount = 0;
+  {
+    StateGuard guard;
+    isOpen = false;
+    ++sessionEpoch;
+    pendingWork = NW_NONE;
+    token[0] = 0;
+    haveToken = false;
+    lineCount = 0;
+  }
+  // Do not stop sec here: an in-flight worker request owns that client.
   online::wifiRelease();
 }
 
 void tick(uint32_t now) {
+  bool wifiUp = online::wifiUp();
+  StateGuard guard;
   if (!isOpen || phase == P_ERROR) return;
-  if (!online::wifiUp()) { phase = P_WIFI; return; }
-  if (phase == P_WIFI) { phase = P_LOGIN; blockedUntil = now + 700; }   // let the link settle first
-  if (!drawnSince && (int32_t)(now - gateUntil) < 0) return;           // let one frame reach the screen before a request blocks
+  if (!wifiUp) {
+    if (!workerBusy && pendingWork == NW_NONE) phase = P_WIFI;
+    return;
+  }
+  if (phase == P_WIFI) { phase = P_LOGIN; blockedUntil = now + 700; }
+  if (!drawnSince && (int32_t)(now - gateUntil) < 0) return;
   if ((int32_t)(now - blockedUntil) < 0) return;
 
   if (!tokenOk(now)) {
-    if (phase == P_RUN) phase = P_LOGIN;                                // token aged out: quiet re-login
-    if (login(now)) { phase = P_RUN; loginFails = 0; nextPoll = now; }
-    else if (phase != P_ERROR && ++loginFails >= 6) setError("Cannot reach Spotify");
-    drawnSince = false; gateUntil = now + 250;
+    if (phase == P_RUN) phase = P_LOGIN;
+    if (!workerBusy && pendingWork == NW_NONE) pendingWork = NW_LOGIN;
     return;
   }
   phase = P_RUN;
 
   if (cmd != C_NONE && (int32_t)(now - cmdAt) >= 0) {
-    sendCommand(now);
-    drawnSince = false; gateUntil = millis() + 250;
+    if (!workerBusy && pendingWork == NW_NONE) pendingWork = NW_COMMAND;
     return;
   }
   if (lyr == L_WANT && (int32_t)(now - lyrAt) >= 0 && haveTrack && durMs) {
-    fetchLyrics(now);
-    drawnSince = false; gateUntil = millis() + 250;
+    if (!workerBusy && pendingWork == NW_NONE) pendingWork = NW_LYRICS;
     return;
   }
   if ((int32_t)(now - nextPoll) >= 0) {
-    poll(now);
-    drawnSince = false; gateUntil = millis() + 250;
+    if (!workerBusy && pendingWork == NW_NONE) pendingWork = NW_POLL;
   }
 }
 
-void input(bool a, bool b, bool c, uint32_t now) {
+static void inputLocked(bool a, bool b, bool c, uint32_t now) {
   if (!isOpen) return;
-  if (phase == P_ERROR) {                       // B retries when the problem was only Wi-Fi / network
+  if (phase == P_ERROR) {
     if (b && configured && online::wifiConfigured() && strstr(errMsg, "Cannot")) {
       errMsg[0] = 0; phase = P_WIFI; loginFails = 0; online::wifiAcquire(now);
     }
     return;
   }
   if (phase != P_RUN) { if (b) online::wifiAcquire(now); return; }
-  if (nothing && !haveTrack) {                  // nothing playing: B asks Spotify to resume on the last device
+  if (nothing && !haveTrack) {
     if (b) { cmd = C_PLAY; cmdAt = now; setNote("resuming...", now); }
     return;
   }
   if (b) {
     cmd = playing ? C_PAUSE : C_PLAY;
     cmdAt = now;
-    progMs = position(now); progAt = now;       // freeze/unfreeze the clock right away
+    progMs = position(now); progAt = now;
     playing = !playing;
   } else if (c) {
     cmd = C_NEXT; cmdAt = now; setNote("next >>", now);
   } else if (a) {
     cmd = C_PREV; cmdAt = now; setNote("<< previous", now);
   }
+}
+
+void input(bool a, bool b, bool c, uint32_t now) {
+  StateGuard guard;
+  inputLocked(a, b, c, now);
 }
 
 // ---------------------------------------------------------------- drawing
@@ -722,7 +917,7 @@ void drawSmall(U8G2 &d, const char *s, int base, int xShift) {
 
 }  // namespace
 
-void draw(U8G2 &d, uint32_t now) {
+static void drawLocked(U8G2 &d, uint32_t now) {
   drawnSince = true;
   d.setFontPosBaseline();
   if (phase == P_ERROR) {
@@ -826,6 +1021,11 @@ void draw(U8G2 &d, uint32_t now) {
     d.drawPixel(w < 127 ? w + 1 : 127, 62);
   }
   d.setFontMode(0);
+}
+
+void draw(U8G2 &d, uint32_t now) {
+  StateGuard guard;
+  drawLocked(d, now);
 }
 
 }  // namespace spotify
