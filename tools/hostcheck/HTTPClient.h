@@ -15,5 +15,6 @@ class HTTPClient {
   int POST(String) { return 0; }
   int sendRequest(const char*, String) { return 0; }
   int getSize() { return 0; }
+  static String errorToString(int) { return String(); }
   void end() {}
 };

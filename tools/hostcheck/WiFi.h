@@ -23,7 +23,8 @@ struct WiFiC {
   int16_t scanComplete() { return 0; }
   void scanDelete() {}
   IPAddress localIP() { return IPAddress(); }
+  bool hostByName(const char *, IPAddress &) { return true; }
 };
 extern WiFiC WiFi;
-class WiFiClient { public: virtual ~WiFiClient() {} void stop() {} };
+class WiFiClient { public: virtual ~WiFiClient() {} void stop() {} uint8_t connected() { return 0; } };
 inline void configTime(long, int, const char *, const char * = nullptr, const char * = nullptr) {}

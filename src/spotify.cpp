@@ -317,6 +317,13 @@ Reply request(const char *host, const char *method, const char *path, const char
   if (strcmp(secHost, host) != 0) { sec.stop(); secHost = host; }   // free the old connection's buffers BEFORE the heap check
   if (ESP.getFreeHeap() < MIN_HEAP) { sec.stop(); secHost = ""; }    // still low: drop even a same-host connection and look again
   if (ESP.getFreeHeap() < MIN_HEAP) { r.code = -2; return r; }
+  if (!sec.connected()) {                                           // resolve first: tells "DNS problem" (-6) apart from "TLS/connect problem" (-1)
+    IPAddress ip;
+    uint32_t d0 = millis();
+    bool ok = WiFi.hostByName(host, ip);
+    if (Serial) Serial.printf("net: dns %s %s in %lu ms\n", host, ok ? "ok" : "FAILED", (unsigned long)(millis() - d0));
+    if (!ok) { r.code = -6; return r; }
+  }
   sec.setInsecure();
   char url[360];
   snprintf(url, sizeof(url), "https://%s%s", host, path);
@@ -339,6 +346,12 @@ Reply request(const char *host, const char *method, const char *path, const char
   } else {
     http.addHeader("Content-Length", "0");     // Spotify answers 411 to a PUT/POST without it
     r.code = http.sendRequest(method, String(""));
+  }
+  if (r.code < 0 && Serial) {                                       // why did the connection fail? (memory, TLS, timeout)
+    char eb[80] = "";
+    sec.lastError(eb, sizeof(eb));
+    Serial.printf("net: connect error \"%s\" / %s, free %lu KB, largest block %lu KB\n", eb, HTTPClient::errorToString(r.code).c_str(),
+                  (unsigned long)(ESP.getFreeHeap() / 1024), (unsigned long)(ESP.getMaxAllocHeap() / 1024));
   }
   if (r.code == 200 && wantBody) {
     int sz = http.getSize();
@@ -601,7 +614,7 @@ void fetchLyrics(uint32_t now) {
   lineCount = 0;
   if (code == 404) { lyr = L_MISSING; return; }
   if (++lyrTries >= 3) { lyr = L_MISSING; return; }
-  lyrAt = now + 5000;
+  lyrAt = now + 2500;
 }
 // ---------------------------------------------------------------- time helpers
 uint32_t position(uint32_t now) {
