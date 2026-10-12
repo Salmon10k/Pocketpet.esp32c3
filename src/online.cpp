@@ -97,7 +97,9 @@ bool session = false;
 bool haveLast = false, fastTry = false;
 uint8_t lastNetIdx = 0;
 const uint32_t FAST_TIMEOUT_MS = 5000;
-uint32_t sessionT0 = 0;                          // for the serial timing log
+uint32_t sessionT0 = 0;
+uint32_t lingerUntil = 0;                        // after the last user leaves, the radio stays up this long (re-entering any online mode is then instant)
+const uint32_t LINGER_MS = 45000;                          // for the serial timing log
 bool wifiHold = false;          // another mode (Spotify) is using the radio
 WifiState wst = W_OFF;
 int attempt = 0, attemptTotal = CONNECT_TRIES;   // 1-based attempt counter shown as "wifi 2/3"
@@ -1116,7 +1118,7 @@ void enter() {
   if (!netConfigured) return;
   uint32_t now = millis();
   queueSync(now, false);
-  beginSession(now);                 // the one and only connection for this visit
+  if (!(wst == W_UP && WiFi.status() == WL_CONNECTED)) beginSession(now);   // already connected (Spotify just left)? reuse it
 }
 
 void leave() {
@@ -1125,7 +1127,10 @@ void leave() {
   pending = 0;
   needTime = false;
   syncTotal = 0;
-  if (wst != W_OFF && !wifiHold) radioOff();
+  if (wst != W_OFF && !wifiHold) {
+    if (wst == W_UP) lingerUntil = millis() + LINGER_MS;     // stay connected for a while: Spotify / Online can reuse it
+    else radioOff();                                         // half-connected: nothing to keep
+  }
 }
 
 bool wifiConfigured() { return netConfigured; }
@@ -1137,7 +1142,10 @@ void wifiAcquire(uint32_t now) {            // another mode wants the radio: con
 
 void wifiRelease() {
   wifiHold = false;
-  if (!session && wst != W_OFF) radioOff();
+  if (!session && wst != W_OFF) {
+    if (wst == W_UP) lingerUntil = millis() + LINGER_MS;
+    else radioOff();
+  }
 }
 
 bool wifiUp() { return wst == W_UP && WiFi.status() == WL_CONNECTED; }
@@ -1179,7 +1187,14 @@ bool input(bool a, bool b, bool c, uint32_t now) {
 }
 
 void tick(uint32_t now) {
-  if (!session && !wifiHold) return;
+  if (!session && !wifiHold) {                          // nobody is using the radio: let it linger, then switch it off
+    if (wst == W_UP) {
+      if ((int32_t)(now - lingerUntil) >= 0 || WiFi.status() != WL_CONNECTED) radioOff();
+    } else if (wst != W_OFF) {
+      radioOff();
+    }
+    return;
+  }
   if (wst == W_SCAN) {
     int16_t n = WiFi.scanComplete();
     if (n == WIFI_SCAN_RUNNING && now - scanStart < 8000) return;

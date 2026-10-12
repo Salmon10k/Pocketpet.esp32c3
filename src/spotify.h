@@ -28,6 +28,7 @@ struct LyricsView {
   char line[96];
   char nextLine[96];
 };
+void setLyricOffset(int ms);                       // Settings > Lyrics sync: + shows lyrics earlier, - later
 bool getLyricsView(LyricsView &out, uint32_t now);
 
 }  // namespace spotify

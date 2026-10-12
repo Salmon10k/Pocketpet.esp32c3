@@ -197,7 +197,9 @@ const uint8_t BRIGHT_LEVELS[] = {8, 60, 150, 255};
 const char *BRIGHT_NAMES[] = {"Low", "Medium", "High", "Max"};
 const uint32_t SLEEP_MS[] = {0, 30000, 60000, 300000};
 const char *SLEEP_NAMES[] = {"Off", "30 s", "1 min", "5 min"};
-uint8_t setBright = 2, setSleep = 0, setFlip = 0;
+uint8_t setBright = 2, setSleep = 0, setFlip = 0, setLyric = 3;
+const int LYRIC_STEPS[] = {-500, -300, -150, 0, 150, 300, 500, 800};   // ms, + = lyrics earlier
+const int LYRIC_STEP_COUNT = 8;
 bool screenOff = false;
 
 void applyScreen() {
@@ -209,12 +211,15 @@ void loadSettings() {
   setBright = constrain(prefs.getUChar("bright", 2), 0, 3);
   setSleep = constrain(prefs.getUChar("sleep", 0), 0, 3);
   setFlip = prefs.getUChar("flip", 0) ? 1 : 0;
+  setLyric = constrain(prefs.getUChar("lyoff", 3), 0, LYRIC_STEP_COUNT - 1);
+  spotify::setLyricOffset(LYRIC_STEPS[setLyric]);
 }
 
 void saveSettings() {
   prefs.putUChar("bright", setBright);
   prefs.putUChar("sleep", setSleep);
   prefs.putUChar("flip", setFlip);
+  prefs.putUChar("lyoff", setLyric);
 }
 
 void resetPet() {
@@ -1209,7 +1214,7 @@ void drawStats() {
 int settingsRow = 0;
 bool resetArmed = false;
 uint32_t settingsMsgUntil = 0;
-const int SETTINGS_ROWS = 5;   // brightness, auto-off, flip, reset pet, back
+const int SETTINGS_ROWS = 6;   // brightness, auto-off, flip, lyrics sync, reset pet, back
 
 void drawSettings(uint32_t now) {
   display.setFont(u8g2_font_7x13B_tf);
@@ -1217,8 +1222,10 @@ void drawSettings(uint32_t now) {
   display.drawHLine(0, 15, 128);
   display.setFont(u8g2_font_6x10_tf);
 
-  const char *labels[SETTINGS_ROWS] = {"Brightness", "Screen off", "Flip screen", "Reset pet", "Back"};
-  const char *vals[SETTINGS_ROWS] = {BRIGHT_NAMES[setBright], SLEEP_NAMES[setSleep], setFlip ? "On" : "Off",
+  const char *labels[SETTINGS_ROWS] = {"Brightness", "Screen off", "Flip screen", "Lyrics sync", "Reset pet", "Back"};
+  char lyricVal[12];
+  snprintf(lyricVal, sizeof(lyricVal), LYRIC_STEPS[setLyric] > 0 ? "+%dms" : "%dms", LYRIC_STEPS[setLyric]);
+  const char *vals[SETTINGS_ROWS] = {BRIGHT_NAMES[setBright], SLEEP_NAMES[setSleep], setFlip ? "On" : "Off", lyricVal,
                                      resetArmed ? "Sure? B=yes" : "", ""};
   const int visible = 4;
   int first = settingsRow - visible + 1;
@@ -1612,7 +1619,8 @@ void loop() {
       if (settingsRow == 0) { setBright = (setBright + 1) % 4; applyScreen(); saveSettings(); }
       else if (settingsRow == 1) { setSleep = (setSleep + 1) % 4; saveSettings(); }
       else if (settingsRow == 2) { setFlip ^= 1; applyScreen(); saveSettings(); }
-      else if (settingsRow == 3) {
+      else if (settingsRow == 3) { setLyric = (setLyric + 1) % LYRIC_STEP_COUNT; spotify::setLyricOffset(LYRIC_STEPS[setLyric]); saveSettings(); }
+      else if (settingsRow == 4) {
         if (resetArmed) { resetPet(); resetArmed = false; settingsMsgUntil = millis() + 1500; }
         else resetArmed = true;
       } else enterMode(MODE_MENU);

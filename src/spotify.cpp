@@ -7,6 +7,7 @@
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <string.h>
+#include <sys/time.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/semphr.h>
@@ -32,7 +33,7 @@ const int      LYRIC_LEAD_MS   = 300;      // show a line slightly early (networ
 const int      MAX_LINES       = 160;
 const int      POOL_BYTES      = 7000;
 const int      MAX_BODY        = 24000;    // refuse lyric answers bigger than this
-const uint32_t MIN_HEAP        = 55000;    // a TLS handshake needs roughly this much free heap
+const uint32_t MIN_HEAP        = 45000;    // a TLS handshake needs roughly this much free heap
 
 const bool configured = SPOTIFY_CLIENT_ID[0] && SPOTIFY_REFRESH_TOKEN[0];
 
@@ -239,9 +240,13 @@ char trackId[40] = "";
 char title[96] = "", artist[64] = "", album[64] = "", artists[80] = "";   // raw UTF-8 for lookups
 char dTitle[96] = "", dArtists[80] = "";                                  // Latin-1 for the screen
 uint32_t durMs = 0, progMs = 0, progAt = 0;
-uint32_t lastPollRttMs = 0; // round-trip time of the last Spotify progress sample
+uint32_t lastPollRttMs = 0;
+uint32_t syncBiasMs = 0;    // extra progress added by the visualizer when the exact timestamp method is unavailable
+int lyricOffsetMs = 0;      // Settings > Lyrics sync (+ = lyrics earlier)
+uint32_t leftAt = 0;        // when Spotify mode was last left (a quick return keeps the old state) // round-trip time of the last Spotify progress sample
 uint32_t nextPoll = 0;
 Lyr lyr = L_NONE;
+int lyrCode = 0;                // last LRCLIB result (404 = no synced lyrics, <=0 = network/memory trouble)
 uint8_t lyrTries = 0;
 uint32_t lyrAt = 0;
 int curLine = -1;
@@ -309,8 +314,9 @@ Reply request(const char *host, const char *method, const char *path, const char
     Reply &r; const char *host, *path; uint32_t t0;
     ~Log() { if (Serial) Serial.printf("net: %s%.28s -> %d in %lu ms, heap %lu KB\n", host, path, r.code, (unsigned long)(millis() - t0), (unsigned long)(ESP.getFreeHeap() / 1024)); }
   } logger{r, host, path, t0};
+  if (strcmp(secHost, host) != 0) { sec.stop(); secHost = host; }   // free the old connection's buffers BEFORE the heap check
+  if (ESP.getFreeHeap() < MIN_HEAP) { sec.stop(); secHost = ""; }    // still low: drop even a same-host connection and look again
   if (ESP.getFreeHeap() < MIN_HEAP) { r.code = -2; return r; }
-  if (strcmp(secHost, host) != 0) { sec.stop(); secHost = host; }
   sec.setInsecure();
   char url[360];
   snprintf(url, sizeof(url), "https://%s%s", host, path);
@@ -434,6 +440,7 @@ void poll(uint32_t now) {
   f["is_playing"] = true;
   f["progress_ms"] = true;
   f["currently_playing_type"] = true;
+  f["timestamp"] = true;
   JsonObject fi = f["item"].to<JsonObject>();
   fi["id"] = true; fi["name"] = true; fi["duration_ms"] = true;
   fi["artists"][0]["name"] = true;
@@ -445,6 +452,24 @@ void poll(uint32_t now) {
   playing = doc["is_playing"] | false;
   progMs = doc["progress_ms"] | 0;
   progAt = t1;
+  {
+    // Best sync: Spotify says progress_ms was true at "timestamp" (Unix ms). With the clock set by NTP the
+    // real position now is progress + (now - timestamp). Without a valid clock fall back to half the round trip.
+    syncBiasMs = lastPollRttMs / 2;
+    uint64_t ts = doc["timestamp"] | (uint64_t)0;
+    struct timeval tv;
+    gettimeofday(&tv, nullptr);
+    if (playing && ts && tv.tv_sec > 1700000000L) {
+      int64_t nowMs = (int64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
+      int64_t corr = nowMs - (int64_t)ts;
+      if (corr >= -1500 && corr <= 10000) {
+        if (corr < 0) corr = 0;
+        progMs += (uint32_t)corr;
+        syncBiasMs = 0;
+        if (Serial) Serial.printf("sync: timestamp method, corr %ld ms, rtt %lu ms\n", (long)corr, (unsigned long)lastPollRttMs);
+      }
+    }
+  }
   JsonObjectConst it = doc["item"];
   if (it.isNull()) { haveTrack = false; nothing = true; nextPoll = t1 + POLL_PAUSED_MS; return; }
   const char *id = it["id"] | "";
@@ -571,6 +596,7 @@ void fetchLyrics(uint32_t now) {
   StateGuard guard;
   if (!currentWorkLocked()) return;
   curLine = -1;
+  lyrCode = code;
   if (ok) { lyr = L_HAVE; return; }
   lineCount = 0;
   if (code == 404) { lyr = L_MISSING; return; }
@@ -682,6 +708,8 @@ bool active() {
 
 // A read-only snapshot for the separate lyrics visualizer. The established Spotify renderer
 // remains independent: this function only copies data while holding the state mutex.
+void setLyricOffset(int ms) { lyricOffsetMs = ms; }
+
 bool getLyricsView(LyricsView &out, uint32_t now) {
   memset(&out, 0, sizeof(out));
   StateGuard guard;
@@ -697,9 +725,13 @@ bool getLyricsView(LyricsView &out, uint32_t now) {
     else if (!haveTrack && nothing) { st = "nothing playing"; busy = false; }
     else if (!haveTrack) st = "asking spotify";
     else if (lyr == L_WANT) st = "finding lyrics";
-    else if (lyr == L_MISSING) { st = "no synced lyrics"; busy = false; }
+    else if (lyr == L_MISSING) {
+      busy = false;
+      if (lyrCode == 404) st = "no synced lyrics";
+      else { snprintf(out.status, sizeof(out.status), "lyrics failed (%d)", lyrCode); st = out.status; }   // -2 = low memory, -1 = no answer
+    }
     else busy = false;
-    strncpy(out.status, st, sizeof(out.status) - 1);
+    if (st != out.status) strncpy(out.status, st, sizeof(out.status) - 1);
     out.statusBusy = busy && st[0];
   }
   // Spotify's progress_ms is sampled during the HTTP request, not when the
@@ -709,8 +741,12 @@ bool getLyricsView(LyricsView &out, uint32_t now) {
   // the original Spotify renderer.
   out.positionMs = position(now);
   if (playing && haveTrack) {
-    out.positionMs += lastPollRttMs / 2;
+    out.positionMs += syncBiasMs;
     if (durMs && out.positionMs > durMs) out.positionMs = durMs;
+  }
+  {                                                    // user fine-tuning from Settings
+    int64_t p = (int64_t)out.positionMs + lyricOffsetMs;
+    out.positionMs = p < 0 ? 0 : (uint32_t)p;
   }
   out.durationMs = durMs;
   if (!haveTrack || lyr != L_HAVE || lineCount <= 0) return true;
@@ -741,23 +777,29 @@ void enter() {
     return;
   }
   bool acquireWifi = false;
+  uint32_t nowMs = millis();
+  // Warm return: you left Spotify / Lyrics visual a moment ago, Wi-Fi is still up and the token is valid.
+  // Both modes share one session, so switching between them keeps the track, the lyrics and the connection.
+  bool warm = configured && online::wifiUp() && haveTrack && tokenOk(nowMs) && (nowMs - leftAt) < 45000;
   {
     StateGuard guard;
     ++sessionEpoch;
     isOpen = true;
-    phase = P_WIFI;
+    phase = warm ? P_RUN : P_WIFI;
     errMsg[0] = 0;
-    haveTrack = false;                 // the access token (RAM only, valid ~1 h) is kept: re-entering skips the login
-    nothing = false;
-    playing = false;
-    trackId[0] = 0;
-    lineCount = 0;
-    lyr = L_NONE;
+    if (!warm) {
+      haveTrack = false;               // the access token (RAM only, valid ~1 h) is kept: re-entering skips the login
+      nothing = false;
+      playing = false;
+      trackId[0] = 0;
+      lineCount = 0;
+      lyr = L_NONE;
+    }
     cmd = C_NONE;
     note[0] = 0;
     hinted = false;
     blockedUntil = 0;
-    nextPoll = 0;
+    nextPoll = 0;                      // ask Spotify right away (also resyncs a warm return)
     loginFails = 0;
     pendingWork = NW_NONE;
     drawnSince = true;
@@ -778,10 +820,10 @@ void leave() {
     isOpen = false;
     ++sessionEpoch;
     pendingWork = NW_NONE;
-    lineCount = 0;
+    leftAt = millis();                 // the track and lyrics are kept for a warm return
   }
   // Do not stop sec here: an in-flight worker request owns that client.
-  online::wifiRelease();
+  online::wifiRelease();                // Wi-Fi lingers ~45 s inside online.cpp
 }
 
 void tick(uint32_t now) {
@@ -1020,7 +1062,7 @@ static void drawLocked(U8G2 &d, uint32_t now) {
 
   if (lyr == L_HAVE && lineCount > 0) {
     int target = -1;                                  // last line whose time has come
-    int p = (int)pos + LYRIC_LEAD_MS;
+    int p = (int)pos + LYRIC_LEAD_MS + lyricOffsetMs;
     int i = curLine >= 0 && curLine < lineCount && (int)lines[curLine].ms <= p ? curLine : 0;
     for (; i < lineCount && (int)lines[i].ms <= p; i++) target = i;
     curLine = target;
