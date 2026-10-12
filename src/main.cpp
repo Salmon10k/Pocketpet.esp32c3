@@ -1744,4 +1744,5 @@ void loop() {
 
     display.sendBuffer();
   }
+  delay(1);   // yield the CPU: loop() used to spin flat out and starved the Spotify network task (same priority)
 }
