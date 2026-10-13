@@ -214,7 +214,13 @@ int layoutRows(const char *utf8, int maxCols, int maxRows, Row *rows, int *total
 
 int rowWidth(U8G2 &d, const uint16_t *g, int n) {
   int w = 0;
-  for (int i = 0; i < n; i++) w += d.getGlyphWidth(g[i]);
+  for (int i = 0; i < n; i++) {
+    // U8G2 exposes getUTF8Width(), not getGlyphWidth(). Encode each shaped
+    // Unicode code point as UTF-8 so the same font metrics are used as drawing.
+    char utf8[4] = {0, 0, 0, 0};
+    encode(g[i], utf8);
+    w += d.getUTF8Width(utf8);
+  }
   return w;
 }
 
