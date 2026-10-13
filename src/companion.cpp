@@ -193,10 +193,11 @@ void draw(U8G2 &d, uint32_t now) {
     d.drawStr(0,12,"COMPANION+");
     d.drawHLine(0,15,128);
     d.setFont(u8g2_font_6x10_tf);
-    d.drawStr(0,29,petName.c_str());
-    d.drawStr(0,42,stage());
-    char line[32]; snprintf(line,sizeof(line),"Lv %u  XP %lu  $%lu",level(),(unsigned long)xp,(unsigned long)coins);
-    d.drawStr(0,55,line);
+    d.drawStr(0,27,petName.c_str());
+    char line[32]; snprintf(line,sizeof(line),"%s Lv %u $%lu",stage(),level(),(unsigned long)coins);
+    d.drawStr(0,39,line);
+    d.drawStr(0,50,"WiFi Pocketpet-Companion");
+    d.drawStr(0,60,"petfriend  192.168.4.1");
     d.drawStr(0,64,"A/C pages  B exit");
   } else if (page == 1) {
     d.drawStr(0,12,"CARE STATUS"); d.drawHLine(0,15,128);
