@@ -12,8 +12,8 @@
 #define PIN_SCL_MPU 6
 
 // ---- Buttons (wired to GND, internal pull-up used) ----
-#define PIN_BTN_A 0   // up / previous / tickle (in Pet mode)
-#define PIN_BTN_B 1   // select / back
+#define PIN_BTN_A 1   // up / previous / tickle (in Pet mode)
+#define PIN_BTN_B 0   // select / back
 #define PIN_BTN_C 2   // down / next / boop (in Pet mode)
 
 // ---- Touch pad (TTP223-style, HIGH when touched) ----
