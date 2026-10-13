@@ -257,3 +257,14 @@ Reaction test, Simon, Dino runner, Breakout, pet reacting to weather, morning gr
 - Spotify screen: Urdu lines use `drawBigRtl()` (2 rows, inverted focus word, first word rightmost). Lyrics visual: one shaped word per box. Song title / artist in the header are still Latin-1 only, so Urdu titles show `?` there.
 - Music notes (U+2669..266C) are dropped by `toLatin1`, so a line with only a note becomes an instrumental gap (bouncing dots).
 - Collision note: another agent had uncommitted work on this feature in the same working folder. `arabic_shape.*` and `arabic_forms.inc` were rewritten (API kept: `hasArabic`, `shapeWord`, `layoutRows`, `rowWidth`, `drawGlyphs`, `MAX_COLS`). Only one agent should edit the repo at a time.
+
+### Lyrics visual overhaul (2026-10-13; PC-previewed only, not yet hardware-validated)
+`src/lyrics_visual.cpp` was rebuilt around a per-word "look" rolled from a hash of the word key (`Look` struct in `draw()`), so every word differs but the same word always looks the same:
+- **16 scenes** (8 old + starfield, tunnel, ripples, checker, sunburst, DNA, spectrum, orbits); never the same scene twice in a row. `gKick` (decays 220 ms after each word) makes the spectrum bars pulse.
+- **Box entry**: CRT grow, drop+bounce, slide, card flip (inverted back face), zoom kick, shake (240 ms, `ENTRY_MS`).
+- **Box decoration**: plain, marching ants, breathing brackets, drop shadow, rounded frame + orbiting dot, ruler ticks + chevrons.
+- **Colour flipping**: inverted box, strobe then periodic pulse, scan bar XOR through the box, negative scene (permanent or flickering every 520 ms), whole-screen flash on 1 in 5 words.
+- **Letter effects** (Latin text only): pop-in, wave, jitter; short words may use `logisoso16`. Urdu words keep whole-word entry only.
+- **Transitions** (190 ms, `TRANS_MS`): blinds, shutter, curtains, scanline dissolve. Bottom bar shows word position in the line.
+- All off-screen-capable drawing goes through the clipped helpers `px/hl/vl/bx/fr/ln` (U8g2 coordinates are unsigned 8-bit).
+- To tune: probabilities are in `draw()` (`flip`, `neg`, `fx`, `big`, `flash`); timings are the two constants at the top. Check on device: frame rate with the heavier scenes (tunnel/ripples/checker), strobe comfort, and whether the progress bar is wanted.
