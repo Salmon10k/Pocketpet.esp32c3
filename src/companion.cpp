@@ -9,6 +9,7 @@ WebServer server(80);
 Preferences prefs;
 bool running = false;
 bool loaded = false;
+bool routesRegistered = false;
 uint8_t page = 0;
 String petName = "Pocket";
 float hunger = 78.0f;
@@ -151,6 +152,7 @@ void begin() {
   page = 0;
   WiFi.mode(WIFI_AP);
   WiFi.softAP("Pocketpet-Companion", "petfriend");
+  if (!routesRegistered) {
   server.on("/", HTTP_GET, [](){ server.send_P(200, "text/html", PAGE_HTML); });
   server.on("/api", HTTP_GET, api);
   server.on("/feed", HTTP_POST, actionFeed);
@@ -158,6 +160,8 @@ void begin() {
   server.on("/clean", HTTP_POST, actionClean);
   server.on("/sleep", HTTP_POST, actionSleep);
   server.onNotFound([](){ server.send(404,"text/plain","Pocketpet companion: open /"); });
+  routesRegistered = true;
+  }
   server.begin();
   running = true;
 }
