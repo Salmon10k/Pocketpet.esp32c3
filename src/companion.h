@@ -3,6 +3,7 @@
 #include <U8g2lib.h>
 
 namespace companion {
+void init();
 void begin();
 void end();
 void tick(uint32_t now);
