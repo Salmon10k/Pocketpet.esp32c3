@@ -127,23 +127,25 @@ void actionClean() { clean(); server.send(200,"text/plain","clean"); }
 void actionSleep() { rest(); server.send(200,"text/plain","rested"); }
 } // namespace
 
+void init() {
+  if (loaded) return;
+  prefs.begin("petplus", false);
+  petName = prefs.getString("name", "Pocket");
+  hunger = prefs.getUChar("hunger", 78);
+  happiness = prefs.getUChar("happy", 72);
+  energy = prefs.getUChar("energy", 82);
+  hygiene = prefs.getUChar("hygiene", 88);
+  xp = prefs.getUInt("xp", 0);
+  coins = prefs.getUInt("coins", 0);
+  petCount = prefs.getUInt("pets", 0);
+  gamesPlayed = prefs.getUInt("games", 0);
+  ageMinutes = prefs.getUInt("age", 0);
+  achievements = prefs.getUInt("ach", 0);
+  loaded = true;
+}
 void begin() {
   if (running) return;
-  if (!loaded) {
-    prefs.begin("petplus", false);
-    petName = prefs.getString("name", "Pocket");
-    hunger = prefs.getUChar("hunger", 78);
-    happiness = prefs.getUChar("happy", 72);
-    energy = prefs.getUChar("energy", 82);
-    hygiene = prefs.getUChar("hygiene", 88);
-    xp = prefs.getUInt("xp", 0);
-    coins = prefs.getUInt("coins", 0);
-    petCount = prefs.getUInt("pets", 0);
-    gamesPlayed = prefs.getUInt("games", 0);
-    ageMinutes = prefs.getUInt("age", 0);
-    achievements = prefs.getUInt("ach", 0);
-    loaded = true;
-  }
+  init();
   page = 0;
   WiFi.mode(WIFI_AP);
   WiFi.softAP("Pocketpet-Companion", "petfriend");
@@ -216,13 +218,13 @@ void draw(U8G2 &d, uint32_t now) {
   }
 }
 void pet() {
-  if (!loaded) return;
+  init();
   petCount++; happiness = min(100.0f,happiness+4); xp += 2;
   if (petCount >= 10) coins += 1;
   checkAchievements();
 }
 void gamePlayed(uint32_t score) {
-  if (!loaded) return;
+  init();
   gamesPlayed++; happiness = min(100.0f,happiness+min(12.0f,3.0f+score));
   xp += 8 + min((uint32_t)20, score); coins += 5 + min((uint32_t)10, score);
   checkAchievements();
