@@ -15,7 +15,7 @@ Pocketpet: a keychain-sized ESP32-C3 Super Mini gadget with a 1.3" SH1106 128x64
 |------|------|-------|
 | OLED SDA/SCL | 8 / 9 | HARDWARE I2C (`Wire`), 400 kHz, U8g2 `..._F_HW_I2C` |
 | MPU6050 SDA/SCL | 5 / 6 | SOFTWARE I2C (SoftWire), raw register reads |
-| Button A / B / C | 0 / 1 / 2 | to GND, internal pull-up, active LOW |
+| Button A / B / C | 2 / 1 / 0 | to GND, internal pull-up, active LOW (A/C were swapped in code after resoldering) |
 | Touch pad OUT | 4 | HIGH when touched |
 | Free ADC pin | 3 | reserved for the battery voltage divider |
 
@@ -28,6 +28,7 @@ GPIO 8/9 are strapping pins, GPIO 0-5 are the only deep-sleep wake pins on the C
 - `src/spotify.h` / `src/spotify.cpp`: Spotify mode (MODE_SPOTIFY, root menu index 7). Borrows the radio from online.cpp through `online::wifiAcquire/wifiRelease/wifiUp/wifiStatusText`; online's tick drives the connection while `wifiHold` is set, but runs no jobs unless `session` (Online mode) is open.
 - `tools/spotify_auth.py`: PKCE login helper run on the PC, writes SPOTIFY_CLIENT_ID / SPOTIFY_REFRESH_TOKEN into secrets.h.
 - `src/main.cpp`: current firmware, hardware init, input handling, MPU, stats, pet animation/drawing, menus and mini-games, shared tilt helper, Tilt Maze, Fluid glue.
+- `src/companion.h` / `src/companion.cpp`: Companion+ progression, achievements, care dashboard, and local Wi-Fi access point. The AP is active only in Companion+ mode; while it is active, main pauses the Online/Spotify radio tick.
 - `src/fluid.h` / `src/fluid.cpp`: fixed-point particle fluid (no Arduino deps, also compiled on PC by `tools/fluidtest/`).
 - `tools/fluidtest/`: host harness (`fluidtest.cpp` + `render.py` PNG contact sheets) for tuning the fluid without hardware.
 - `src/config.h`: hardware pins and tuning.
@@ -75,6 +76,7 @@ Salman confirms on the device.
 | Games: Snake, Flappy, procedural Tilt Maze, Dino Runner with crouch/obstacle variety | DONE in code, needs Salman hardware confirmation |
 | Fluid main mode (root menu item 2), 3 presets | DONE in code + host-checked + host-rendered; needs Salman hardware confirmation (FPS, tilt feel) |
 | Tilt Maze rewrite (fixed 20 ms physics, shared tilt helper) | DONE in code + host-checked; needs hardware confirmation |
+| Companion+ progression + local phone dashboard | Added on feature branch, needs host check, device build and hardware test |
 | Pomodoro + Stopwatch | TODO (batch 3) |
 | Online mode (12 screens: Clock, Weather, Forecast, Air quality, Currency, World clocks, Fact, Advice, Moon, Net status, ISS, GitHub) | DONE in code + host-checked; needs Salman hardware confirmation (never compiled for the chip) |
 | Pet corner badges from Online data (hot, rain, smog, night) | DONE in code, needs hardware confirmation |
