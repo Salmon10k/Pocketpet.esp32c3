@@ -113,12 +113,14 @@ String achievementsText() {
   return out;
 }
 void api() {
-  String json = "{\"name\":\""+petName+"\",";
-  json += "\"hunger\":"+String(hunger,0)+",\"happiness\":"+String(happiness,0)+",";
-  json += "\"energy\":"+String(energy,0)+",\"hygiene\":"+String(hygiene,0)+",";
-  json += "\"xp\":"+String(xp)+",\"level\":"+String(level())+",\"coins\":"+String(coins)+",";
-  json += "\"age\":"+String(ageMinutes)+",\"stage\":\""+String(stage())+"\",\"mood\":\""+String(mood())+"\",";
-  json += "\"achievements\":"+achievementsText()+"}";
+  String ach = achievementsText();
+  char json[320];
+  snprintf(json, sizeof(json),
+    "{\"name\":\"%s\",\"hunger\":%d,\"happiness\":%d,\"energy\":%d,\"hygiene\":%d,"
+    "\"xp\":%lu,\"level\":%u,\"coins\":%lu,\"age\":%lu,\"stage\":\"%s\",\"mood\":\"%s\",\"achievements\":%s}",
+    petName.c_str(), (int)hunger, (int)happiness, (int)energy, (int)hygiene,
+    (unsigned long)xp, (unsigned int)level(), (unsigned long)coins, (unsigned long)ageMinutes,
+    stage(), mood(), ach.c_str());
   server.send(200, "application/json", json);
 }
 void actionFeed() { feed(); server.send(200,"text/plain","fed"); }
@@ -198,7 +200,7 @@ void draw(U8G2 &d, uint32_t now) {
     d.drawStr(0,39,line);
     d.drawStr(0,50,"WiFi Pocketpet-Companion");
     d.drawStr(0,60,"petfriend  192.168.4.1");
-    d.drawStr(0,64,"A/C pages  B exit");
+    d.drawStr(0,63,"A/C pages  B exit");
   } else if (page == 1) {
     d.drawStr(0,12,"CARE STATUS"); d.drawHLine(0,15,128);
     d.setFont(u8g2_font_6x10_tf);
