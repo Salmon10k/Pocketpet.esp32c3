@@ -9,7 +9,6 @@ Scene scene = FLOW;
 bool paused = false;
 uint32_t enteredAt = 0, pausedAt = 0, pausedTotal = 0;
 uint32_t lastFrame = 0;
-uint32_t sceneSeed = 0xC3A51u;
 
 float wave(float x, float t, float phase, float freq, float amp) {
   return 33.0f + sinf(x * freq + t * 0.0014f + phase) * amp
