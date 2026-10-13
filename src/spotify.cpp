@@ -1,5 +1,6 @@
 #include "spotify.h"
 #include "online.h"
+#include "arabic_shape.h"
 #include "config.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -31,7 +32,7 @@ const uint32_t POLL_PAUSED_MS  = 8000;
 const uint32_t HTTP_TIMEOUT_MS = 8000;
 const int      LYRIC_LEAD_MS   = 300;      // show a line slightly early (network + draw delay)
 const int      MAX_LINES       = 160;
-const int      POOL_BYTES      = 7000;
+const int      POOL_BYTES      = 12000;
 const int      MAX_BODY        = 24000;    // refuse lyric answers bigger than this
 const uint32_t MIN_HEAP        = 45000;    // a TLS handshake needs roughly this much free heap
 
@@ -58,6 +59,7 @@ void toLatin1(char *s) {
     else if (cp == 0x2013 || cp == 0x2014) cp = '-';
     else if (cp == 0x2026) { *w++ = '.'; *w++ = '.'; cp = '.'; }
     else if (cp == 0x00A0) cp = ' ';
+    else if (cp >= 0x2669 && cp <= 0x266C) continue;                       // music notes (the font has none): drop them
     if (cp > 0xFF) { if (lastQ) continue; cp = '?'; }
     lastQ = (cp == '?');
     *w++ = (char)cp;
@@ -142,14 +144,20 @@ int parseLrc(const char *lrc) {
       const char *e = eol;
       while (e > q && (e[-1] == ' ' || e[-1] == '\r')) e--;
       int len = (int)(e - q);
-      if (len > 90) len = 90;
-      if (poolUsed + len + 1 > POOL_BYTES) break;
+      char tmp[128];                                    // the line without its timestamps
+      int tl = len > 120 ? 120 : len;
+      while (tl > 0 && tl < len && ((unsigned char)q[tl] & 0xC0) == 0x80) tl--;   // never cut inside a UTF-8 character
+      memcpy(tmp, q, (size_t)tl);
+      tmp[tl] = 0;
+      bool rtl = arabic::hasArabic(tmp);               // Urdu / Arabic: keep the UTF-8, marked with 0x1B, and shape it when drawing
+      if (!rtl) { toLatin1(tmp); int a = 0, b = (int)strlen(tmp); while (tmp[a] == ' ') a++; while (b > a && tmp[b - 1] == ' ') b--; memmove(tmp, tmp + a, (size_t)(b - a)); tmp[b - a] = 0; if (b - a > 90) tmp[90] = 0; }
+      int need = (int)strlen(tmp) + 1 + (rtl ? 1 : 0);
+      if (poolUsed + need > POOL_BYTES) break;
       char *dst = pool + poolUsed;
-      memcpy(dst, q, (size_t)len);
-      dst[len] = 0;
-      toLatin1(dst);
+      if (rtl) { dst[0] = 0x1B; memcpy(dst + 1, tmp, strlen(tmp) + 1); }
+      else memcpy(dst, tmp, strlen(tmp) + 1);
       uint16_t off = (uint16_t)poolUsed;
-      poolUsed += (int)strlen(dst) + 1;
+      poolUsed += need;
       for (int i = 0; i < nt && lineCount < MAX_LINES; i++) lines[lineCount++] = {times[i], off};
     }
     p = *eol ? eol + 1 : eol;
@@ -971,7 +979,36 @@ void drawDots(U8G2 &d, uint32_t now, int xShift) {      // bouncing dots for ins
 // -1 = no focus effect (old line leaving, or plain title). The focused word is drawn inverted and a
 // bar under the text fills as the line is sung (word timing is estimated from the line length,
 // LRC files only carry line times).
+// Urdu / Arabic line (stored with a leading 0x1B): shaped, right-to-left, up to 2 rows of 16 glyphs.
+// The focus word is inverted, the first word of the line is on the right.
+void drawBigRtl(U8G2 &d, const char *utf8, int xShift, int fMil) {
+  arabic::Row rows[2];
+  int totalWords = 0;
+  int n = arabic::layoutRows(utf8, arabic::MAX_COLS, 2, rows, &totalWords);
+  if (n == 0) return;
+  int shown = 0;
+  for (int r = 0; r < n; r++) shown += rows[r].nWords;
+  int focus = (fMil < 0 || shown == 0) ? -1 : (int)((int32_t)fMil * shown / 1000);
+  if (focus >= shown) focus = shown - 1;
+  d.setFont(u8g2_font_unifont_t_urdu);
+  for (int r = 0; r < n; r++) {
+    int base = n == 1 ? 38 : 28 + r * 16;
+    int w = arabic::rowWidth(d, rows[r].g, rows[r].n);
+    int x0 = (128 - w) / 2 + xShift;
+    arabic::drawGlyphs(d, x0, base, rows[r].g, rows[r].n);
+    for (int k = 0; k < rows[r].nWords; k++) {
+      if (rows[r].words[k].idx != focus) continue;
+      int wx = x0 + arabic::rowWidth(d, rows[r].g, rows[r].words[k].start);
+      int ww = arabic::rowWidth(d, rows[r].g + rows[r].words[k].start, rows[r].words[k].len);
+      d.setDrawColor(2);                                    // XOR: inverts the word in place
+      d.drawBox(wx - 1, base - 11, ww + 2, 14);
+      d.setDrawColor(1);
+    }
+  }
+}
+
 void drawBig(U8G2 &d, const char *text, int xShift, int fMil) {
+  if (text[0] == 0x1B) { drawBigRtl(d, text + 1, xShift, fMil); return; }
   int len = (int)strlen(text);
   int tier = len <= 18 ? 0 : (len <= 40 ? 1 : 2);        // bold 7x13, normal 6x10, small 5x7 (up to 3 rows)
   d.setFont(tier == 0 ? u8g2_font_7x13B_tf : (tier == 1 ? u8g2_font_6x10_tf : u8g2_font_5x7_tf));
@@ -1098,15 +1135,15 @@ static void drawLocked(U8G2 &d, uint32_t now) {
       const char *txt = pool + lines[target].off;
       uint32_t ls = lines[target].ms;
       uint32_t span = target + 1 < lineCount ? lines[target + 1].ms - ls : 4000;
-      uint32_t dur = (uint32_t)strlen(txt) * 105 + 500;
+      uint32_t dur = (uint32_t)(txt[0] == 0x1B ? strlen(txt) / 2 : strlen(txt)) * 105 + 500;
       if (dur > span * 9 / 10) dur = span * 9 / 10;
       if (dur < 400) dur = 400;
       int rel = p - (int)ls;
       int f = rel <= 0 ? 0 : (rel >= (int)dur ? 1000 : (int)((int64_t)rel * 1000 / (int)dur));
       drawBig(d, txt, inShift, f);
     }
-    if (!noteOn && target >= 0 && strlen(pool + lines[target].off) <= 40 &&
-        target + 1 < lineCount && pool[lines[target + 1].off]) {
+    if (!noteOn && target >= 0 && strlen(pool + lines[target].off) <= 40 && pool[lines[target].off] != 0x1B &&
+        target + 1 < lineCount && pool[lines[target + 1].off] && pool[lines[target + 1].off] != 0x1B) {
       d.drawHLine(0, 49, 128);                       // separate main lyric from its preview
       drawNextPreview(d, pool + lines[target + 1].off, 58, inShift);
     }

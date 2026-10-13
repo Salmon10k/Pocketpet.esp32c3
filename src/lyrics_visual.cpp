@@ -1,5 +1,6 @@
 #include "lyrics_visual.h"
 #include "spotify.h"
+#include "arabic_shape.h"
 #include <string.h>
 #include <math.h>
 
@@ -12,7 +13,8 @@ uint32_t sceneSeed = 0;
 uint32_t transitionAt = 0;
 
 struct WordFrame {
-  char word[28];
+  bool rtl;
+  char word[40];
   int index;
   int count;
   int key;
@@ -26,17 +28,19 @@ void copyWord(const char *src, size_t n, char *dst, size_t cap) {
 }
 
 WordFrame selectWord(const spotify::LyricsView &v) {
-  WordFrame out = {{0}, 0, 0, -1};
+  WordFrame out = {false, {0}, 0, 0, -1};
   if (!v.lyricsReady || !v.line[0]) return out;
+  const char *text = v.line;
+  if (text[0] == 0x1B) { out.rtl = true; text++; }          // Urdu / Arabic line: raw UTF-8, shaped when the word is drawn
 
   int starts[20], lengths[20], count = 0;
-  const char *p = v.line;
+  const char *p = text;
   while (*p && count < 20) {
     while (*p == ' ') ++p;
     if (!*p) break;
     const char *start = p;
     while (*p && *p != ' ') ++p;
-    starts[count] = (int)(start - v.line);
+    starts[count] = (int)(start - text);
     lengths[count] = (int)(p - start);
     ++count;
   }
@@ -54,7 +58,7 @@ WordFrame selectWord(const spotify::LyricsView &v) {
     sum += (uint32_t)(lengths[i] + 2);
     if (progress < sum) { index = i; break; }
   }
-  copyWord(v.line + starts[index], (size_t)lengths[index], out.word, sizeof(out.word));
+  copyWord(text + starts[index], (size_t)lengths[index], out.word, sizeof(out.word));
   out.index = index;
   out.count = count;
   out.key = (int)(v.lineStartMs / 10U) * 23 + index;
@@ -286,16 +290,25 @@ void drawStatus(U8G2 &d, const char *text, bool busy, uint32_t now) {
   }
 }
 
-void drawWord(U8G2 &d, const char *word, uint32_t now, int scene, uint32_t seed) {
-  char fitted[28];
+void drawWord(U8G2 &d, const char *word, uint32_t now, int scene, uint32_t seed, bool rtl = false) {
+  char fitted[40];
   strncpy(fitted, word, sizeof(fitted) - 1);
   fitted[sizeof(fitted) - 1] = 0;
-  d.setFont(u8g2_font_7x13B_tf);
-  if (d.getStrWidth(fitted) > 96) d.setFont(u8g2_font_6x10_tf);
-  if (d.getStrWidth(fitted) > 104) d.setFont(u8g2_font_5x7_tf);
-  while (fitted[0] && d.getStrWidth(fitted) > 104) fitted[strlen(fitted) - 1] = 0;
-
-  int textW = d.getStrWidth(fitted);
+  uint16_t glyphs[24];
+  int glyphCount = 0;
+  int textW;
+  if (rtl) {                                                   // Urdu / Arabic word: shaped glyphs of the unifont Urdu font
+    glyphCount = arabic::shapeWord(fitted, (int)strlen(fitted), glyphs, 24);
+    d.setFont(u8g2_font_unifont_t_urdu);
+    while (glyphCount > 1 && arabic::rowWidth(d, glyphs, glyphCount) > 104) glyphCount--;
+    textW = arabic::rowWidth(d, glyphs, glyphCount);
+  } else {
+    d.setFont(u8g2_font_7x13B_tf);
+    if (d.getStrWidth(fitted) > 96) d.setFont(u8g2_font_6x10_tf);
+    if (d.getStrWidth(fitted) > 104) d.setFont(u8g2_font_5x7_tf);
+    while (fitted[0] && d.getStrWidth(fitted) > 104) fitted[strlen(fitted) - 1] = 0;
+    textW = d.getStrWidth(fitted);
+  }
   int boxW = textW + 12;
   if (boxW < 28) boxW = 28;
   if (boxW > 116) boxW = 116;
@@ -303,7 +316,7 @@ void drawWord(U8G2 &d, const char *word, uint32_t now, int scene, uint32_t seed)
   uint32_t age = now - transitionAt;
   int x = (128 - boxW) / 2;
   int y = 21 + (age < 110 ? (int)(110 - age) / 22 : 0);        // small drop-in when the word changes
-  int baseline = y + 15;
+  int baseline = y + (rtl ? 16 : 15);
   bool inv = sceneInverted(scene);
 
   drawScene(d, scene, now, seed);
@@ -317,7 +330,8 @@ void drawWord(U8G2 &d, const char *word, uint32_t now, int scene, uint32_t seed)
     d.setDrawColor(1);
   }
   d.drawFrame(x, y, boxW, boxH);
-  d.drawStr((128 - textW) / 2, baseline, fitted);
+  if (rtl) arabic::drawGlyphs(d, (128 - textW) / 2, baseline, glyphs, glyphCount);
+  else d.drawStr((128 - textW) / 2, baseline, fitted);
   d.setDrawColor(1);
   if (age < 90) {                                              // quick glitch flash on every new word
     d.setDrawColor(2);
@@ -363,7 +377,7 @@ void draw(U8G2 &d, uint32_t now) {
     lastScene = sc;
     sceneSeed = h >> 8;
   }
-  drawWord(d, word.word, now, lastScene < 0 ? 0 : lastScene, sceneSeed);
+  drawWord(d, word.word, now, lastScene < 0 ? 0 : lastScene, sceneSeed, word.rtl);
 }
 
 }  // namespace lyrics_visual
