@@ -160,7 +160,6 @@ void begin() {
   server.onNotFound([](){ server.send(404,"text/plain","Pocketpet companion: open /"); });
   server.begin();
   running = true;
-  lastTick = lastMinute = millis();
 }
 void end() {
   if (!running) return;
@@ -172,8 +171,8 @@ void end() {
 }
 bool active() { return running; }
 void tick(uint32_t now) {
-  if (!running) return;
-  server.handleClient();
+  if (!loaded) init();
+  if (running) server.handleClient();
   if (now - lastTick >= 60000) {
     lastTick = now;
     hunger = max(0.0f, hunger - 1.0f);
