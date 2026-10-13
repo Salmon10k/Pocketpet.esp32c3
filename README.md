@@ -15,9 +15,9 @@ Keychain-sized digital pet gadget built around an ESP32-C3 Super Mini with a 1.3
 | OLED SH1106 | SCL | **9** | Hardware I2C, 400 kHz |
 | MPU6050 | SDA | **5** | Software I2C (SoftWire) |
 | MPU6050 | SCL | **6** | Software I2C (SoftWire) |
-| Button A | one leg to GND | **0** | Up / previous / tickle |
+| Button A | one leg to GND | **2** | Up / previous / tickle |
 | Button B | one leg to GND | **1** | Select / back |
-| Button C | one leg to GND | **2** | Down / next / boop |
+| Button C | one leg to GND | **0** | Down / next / boop |
 | Touch pad | OUT | **4** | TTP223-style, HIGH when touched (the pin next to 3V3) |
 
 The physical wiring did not change when the I2C roles were swapped. Only the drivers did.
@@ -35,6 +35,13 @@ The physical wiring did not change when the I2C roles were swapped. Only the dri
 
 ### Menu
 Pet, Fluid, Stats, Motion test, Tools, Games, Online, Spotify, Settings (brightness, screen auto-off, flip screen, lyrics sync, reset pet). Tools contains Temperature. Games contains Magic 8-ball, Dice, Snake, Flappy, procedurally generated Tilt Maze maps, and an upgraded Dino Runner with jumping, crouching, cactus clusters and flying birds. Online has 12 screens that need the internet (see below). Copy `src/secrets.example.h` to `src/secrets.h` and set `WIFI_SSID` / `WIFI_PASSWORD` locally first. The touch pad only works in Pet mode.
+
+
+### Companion+ mode
+
+Companion+ adds a second, persistent Tamagotchi-style progression layer without replacing the original expressive Pocketpet face or existing games. Care stats (fullness, happiness, energy, cleanliness) slowly change over time; interactions earn XP and coins, level-ups unlock life stages, and six achievements track cuddles, play and care. The companion never dies.
+
+Open **Companion+** from the root menu to view the pet and start a local Wi-Fi dashboard. Connect your phone to **Pocketpet-Companion** (password **petfriend**) and open **http://192.168.4.1**. The dashboard can feed, play with, clean and rest the companion. The access point is only active while Companion+ is open, then it shuts down when you leave. This dashboard is local-only and does not require internet or cloud services.
 
 ### Online mode
 Wi-Fi stays **off** everywhere except Online mode. Entering Online connects **once** (up to 3 automatic attempts, then each request is retried up to 3 times for random network hiccups), fetches everything for every screen in one go, and stays connected while you browse. Leaving Online switches the radio off. The list header shows the state: `wifi 2/3`, `sync 4/9`, `online`, `offline`. Every screen shows how old its data is (top right). If a refresh fails you keep the last good data.
