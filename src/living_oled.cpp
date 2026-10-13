@@ -8,7 +8,6 @@ const char *SCENE_NAMES[] = {"FLOW", "ORBIT", "FIELD", "RAIN", "MESH", "TERRAIN"
 Scene scene = FLOW;
 bool paused = false;
 uint32_t enteredAt = 0, pausedAt = 0, pausedTotal = 0;
-uint32_t lastFrame = 0;
 
 float wave(float x, float t, float phase, float freq, float amp) {
   return 33.0f + sinf(x * freq + t * 0.0014f + phase) * amp
@@ -115,7 +114,6 @@ void enter() {
   paused = false;
   enteredAt = millis();
   pausedAt = pausedTotal = 0;
-  lastFrame = 0;
 }
 void leave() { paused = false; }
 void input(bool a, bool b, bool c, uint32_t now) {
@@ -128,8 +126,7 @@ void input(bool a, bool b, bool c, uint32_t now) {
   }
 }
 void draw(U8G2 &d, uint32_t now) {
-  if (now - lastFrame < 25) return;
-  lastFrame = now;
+  // main.cpp clears the buffer before every draw call, so this must always draw (an early return would flash a blank frame)
   uint32_t t = animTime(now);
   switch (scene) {
     case FLOW: drawFlow(d, t); break;
