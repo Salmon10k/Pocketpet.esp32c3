@@ -9,6 +9,7 @@
 #include "spotify.h"
 #include "lyrics_visual.h"
 #include "living_oled.h"
+#include "companion.h"
 
 // OLED: 1.3" SH1106 on hardware I2C (SDA = GPIO 8, SCL = GPIO 9).
 U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
@@ -566,6 +567,7 @@ enum Mode {
   MODE_SPOTIFY,
   MODE_LYRICS_VISUAL,
   MODE_LIVING_OLED,
+  MODE_COMPANION,
   MODE_SETTINGS,
   MODE_TEMP,
   MODE_8BALL,
@@ -579,8 +581,8 @@ enum Mode {
 
 Mode mode = MODE_MENU;
 
-const char *rootItems[] = {"Pet", "Fluid", "Stats", "Motion test", "Tools", "Games", "Online", "Spotify", "Lyrics visual", "Living OLED", "Settings"};
-const int ROOT_COUNT = 11;
+const char *rootItems[] = {"Pet", "Fluid", "Stats", "Motion test", "Tools", "Games", "Online", "Spotify", "Lyrics visual", "Living OLED", "Companion+", "Settings"};
+const int ROOT_COUNT = 12;
 const char *toolsItems[] = {"Temperature"};
 const int TOOLS_COUNT = 1;
 const char *gamesItems[] = {"Magic 8-ball", "Dice", "Snake", "Flappy", "Tilt Maze", "Dino Runner", "Catch Water"};
@@ -1327,6 +1329,8 @@ void drawDice() {
 
 void enterMode(Mode m) {
   if (mode == MODE_PET && m != MODE_PET) saveStats(true);
+  if (mode == MODE_COMPANION && m != MODE_COMPANION) companion::end();
+  if (mode != m && (mode == MODE_SNAKE || mode == MODE_FLAPPY || mode == MODE_TILT_MAZE || mode == MODE_DINO || mode == MODE_CATCH) && gameScore > 0) companion::gamePlayed(gameScore);
   if (mode == MODE_ONLINE && m != MODE_ONLINE) online::leave();   // radio off, cancel requests
   if (mode == MODE_SPOTIFY && m != MODE_SPOTIFY) spotify::leave();
   if (mode == MODE_LYRICS_VISUAL && m != MODE_LYRICS_VISUAL) lyrics_visual::leave();
@@ -1343,6 +1347,7 @@ void enterMode(Mode m) {
   if (m == MODE_SPOTIFY) spotify::enter();
   if (m == MODE_LYRICS_VISUAL) lyrics_visual::enter();
   if (m == MODE_LIVING_OLED) living_oled::enter();
+  if (m == MODE_COMPANION) companion::begin();
   if (m == MODE_SETTINGS) { settingsRow = 0; resetArmed = false; }
   if (m == MODE_8BALL) eightBallIndex = random(EIGHT_BALL_COUNT);
   if (m == MODE_DICE) diceValue = random(1, 7);
@@ -1462,8 +1467,11 @@ void loop() {
   // The touch pad only works in Pet mode (petting). It used to double as Home, but it misfired too often.
 
   gameTick(now);
-  online::tick(now);
-  spotify::tick(now);
+  if (!companion::active()) {
+    online::tick(now);
+    spotify::tick(now);
+  }
+  companion::tick(now);
   for (int t = online::takeTreats(); t > 0; t--) addHappy(1);   // each successful fetch is a small treat
 
   // Every 2 seconds: recover the MPU and the OLED if either one dropped out.
@@ -1523,6 +1531,7 @@ void loop() {
       trigger(OV_LOVE, 1200);
       addHappy(4);
       pet.pets++;
+      companion::pet();
       spawnHeart(now);
       spawnHeart(now);
     }
@@ -1596,6 +1605,8 @@ void loop() {
         enterMode(MODE_LYRICS_VISUAL);
       } else if (menuIndex == 9) {
         enterMode(MODE_LIVING_OLED);
+      } else if (menuIndex == 10) {
+        enterMode(MODE_COMPANION);
       } else {
         enterMode(MODE_SETTINGS);
       }
@@ -1647,6 +1658,9 @@ void loop() {
       }
     }
     if (mode == MODE_SPOTIFY || mode == MODE_LYRICS_VISUAL) spotify::input(a, bShort, c, now);
+  } else if (mode == MODE_COMPANION) {
+    if (b) enterMode(MODE_MENU);
+    else companion::input(a, b, c);
   } else if (mode == MODE_LIVING_OLED) {
     static bool livingHeld = false, livingLong = false;
     bool livingShortB = false;
@@ -1669,10 +1683,12 @@ void loop() {
     if (a) {            // tickle
       trigger(OV_LAUGH, 1600);
       addHappy(3);
+      companion::pet();
     }
     if (c) {            // boop
       trigger(OV_SURPRISED, 800);
       addHappy(1);
+      companion::pet();
     }
   } else if (mode == MODE_8BALL) {
     if (a || c) eightBallIndex = random(EIGHT_BALL_COUNT);
@@ -1747,6 +1763,8 @@ void loop() {
       lyrics_visual::draw(display, now);
     } else if (mode == MODE_LIVING_OLED) {
       living_oled::draw(display, now);
+    } else if (mode == MODE_COMPANION) {
+      companion::draw(display, now);
     } else if (mode == MODE_TEMP) {
       drawTemperature();
     } else if (mode == MODE_8BALL) {
