@@ -268,3 +268,10 @@ Reaction test, Simon, Dino runner, Breakout, pet reacting to weather, morning gr
 - **Transitions** (190 ms, `TRANS_MS`): blinds, shutter, curtains, scanline dissolve. Bottom bar shows word position in the line.
 - All off-screen-capable drawing goes through the clipped helpers `px/hl/vl/bx/fr/ln` (U8g2 coordinates are unsigned 8-bit).
 - To tune: probabilities are in `draw()` (`flip`, `neg`, `fx`, `big`, `flash`); timings are the two constants at the top. Check on device: frame rate with the heavier scenes (tunnel/ripples/checker), strobe comfort, and whether the progress bar is wanted.
+
+### Word timing inside a lyric line (2026-10-14; host-tested, not yet hardware-validated)
+LRC only has line start times, so which word is "being sung" used to be guessed from character count (long/held words were wrong). Now:
+- `src/lyric_timing.{h,cpp}` (new): `estimate()` gives word start times from syllable counts (`syllables()`, silent final e handled; Urdu/Arabic ~2 letters per syllable). Short lines: words at syllable pace stretched by 40% of the spare time, the LAST word is held until the line ends. Slow lines (words fill >=60% of the line): all words stretched over the line, last word weighted x1.4. `focusIndex()` picks the word.
+- `parseLrc()` also reads **Enhanced LRC** word tags (`<mm:ss.xx>word`) when LRCLIB has them: real per-word times are stored in `wordT[]` (`Lyric.wt/nw`) and used instead of the estimate when at least half the words are tagged and the cleaned text still has the same words.
+- `spotify::wordFocus(line, relMs, span)` is the single source of truth. The Spotify screen (`drawBig`/`drawBigRtl` take a word index now, not a 0..1000 fraction) and the visualizer (`LyricsView::focusWord`) both use it, so they agree.
+- Tune: constants in `lyric_timing.cpp` (`200 ms/syllable + 60`, 40% stretch, 1.4x last word, 60% slow-line threshold). Global early/late is still Settings > Lyrics sync. Check on device with a long-held-note song, and note `lyric_timing` was started by the other agent (uncommitted at the time) and finished here.

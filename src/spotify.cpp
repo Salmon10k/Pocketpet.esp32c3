@@ -1,6 +1,7 @@
 #include "spotify.h"
 #include "online.h"
 #include "arabic_shape.h"
+#include "lyric_timing.h"
 #include "config.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -97,17 +98,77 @@ void cleanTitle(const char *src, char *dst, size_t cap) {
   if (n == 0) { strncpy(dst, src, cap - 1); dst[cap - 1] = 0; }
 }
 
-struct Lyric { uint32_t ms; uint16_t off; };
+// wt/nw: optional real per-word start times (Enhanced LRC "<mm:ss.xx>word"), ms from the line start, in wordT[]
+struct Lyric { uint32_t ms; uint16_t off; uint16_t wt; uint8_t nw; };
+const int WORDT_CAP = 640;
 Lyric lines[MAX_LINES];
 int lineCount = 0;
 char pool[POOL_BYTES];
 int poolUsed = 0;
+uint16_t wordT[WORDT_CAP];
+int wordUsed = 0;
+
+// "<mm:ss.xx>" at c (c < end). On success returns true, sets ms and next (just after '>').
+bool parseWordTag(const char *c, const char *end, uint32_t &ms, const char *&next) {
+  if (c >= end || *c != '<') return false;
+  const char *t = c + 1;
+  if (!(*t >= '0' && *t <= '9')) return false;
+  uint32_t mm = 0, ss = 0, frac = 0;
+  while (t < end && *t >= '0' && *t <= '9') mm = mm * 10 + (uint32_t)(*t++ - '0');
+  if (t >= end || *t != ':') return false;
+  t++;
+  if (!(t < end && *t >= '0' && *t <= '9')) return false;
+  while (t < end && *t >= '0' && *t <= '9') ss = ss * 10 + (uint32_t)(*t++ - '0');
+  if (t < end && (*t == '.' || *t == ':')) {
+    t++;
+    int digits = 0;
+    while (t < end && *t >= '0' && *t <= '9') {
+      if (digits < 3) { frac = frac * 10 + (uint32_t)(*t - '0'); digits++; }
+      t++;
+    }
+    while (digits < 3) { frac *= 10; digits++; }
+  }
+  if (t >= end || *t != '>') return false;
+  ms = mm * 60000UL + ss * 1000UL + frac;
+  next = t + 1;
+  return true;
+}
+
+// space-separated words: start/end offsets of each, up to cap. Returns the count.
+int tokenize(const char *s, int *ts, int *te, int cap) {
+  int n = 0;
+  const char *p = s;
+  while (*p && n < cap) {
+    while (*p == ' ') ++p;
+    if (!*p) break;
+    ts[n] = (int)(p - s);
+    while (*p && *p != ' ') ++p;
+    te[n++] = (int)(p - s);
+  }
+  return n;
+}
+
+// Index of the word being sung `relMs` after line `li` started (-1 if there is no such line). Uses the real word
+// times of an Enhanced LRC line when it has them, otherwise lyric_timing::estimate() (syllable pace, last word held).
+int wordFocus(int li, int32_t relMs, uint32_t spanMs) {
+  if (li < 0 || li >= lineCount) return -1;
+  uint32_t starts[lyric_timing::MAX_WORDS];
+  int n;
+  if (lines[li].nw > 0) {
+    n = lines[li].nw;
+    for (int i = 0; i < n; i++) starts[i] = wordT[lines[li].wt + i];
+  } else {
+    n = lyric_timing::estimate(pool + lines[li].off, spanMs, starts, lyric_timing::MAX_WORDS);
+  }
+  return lyric_timing::focusIndex(starts, n, relMs < 0 ? 0U : (uint32_t)relMs);
+}
 
 // Parse "[mm:ss.xx]text" lines (several leading timestamps allowed). Lines are sorted by time.
 // Metadata tags like [ar:Artist] are skipped. Returns the number of lines kept.
 int parseLrc(const char *lrc) {
   lineCount = 0;
   poolUsed = 0;
+  wordUsed = 0;
   const char *p = lrc;
   while (*p && lineCount < MAX_LINES) {
     const char *eol = p;
@@ -143,14 +204,57 @@ int parseLrc(const char *lrc) {
       while (q < eol && *q == ' ') q++;
       const char *e = eol;
       while (e > q && (e[-1] == ' ' || e[-1] == '\r')) e--;
-      int len = (int)(e - q);
-      char tmp[128];                                    // the line without its timestamps
-      int tl = len > 120 ? 120 : len;
-      while (tl > 0 && tl < len && ((unsigned char)q[tl] & 0xC0) == 0x80) tl--;   // never cut inside a UTF-8 character
-      memcpy(tmp, q, (size_t)tl);
+      char tmp[128];                                    // the line without its timestamps and word tags
+      int tl = 0;
+      uint32_t tagMs[lyric_timing::MAX_WORDS * 2];
+      int tagPos[lyric_timing::MAX_WORDS * 2], ntag = 0;
+      const char *c = q;
+      while (c < e && tl < 120) {
+        uint32_t wms; const char *nx;
+        if (*c == '<' && parseWordTag(c, e, wms, nx)) {   // Enhanced LRC word tag: remember when it sits in the text
+          if (ntag < lyric_timing::MAX_WORDS * 2) { tagMs[ntag] = wms; tagPos[ntag] = tl; ntag++; }
+          c = nx;
+          continue;
+        }
+        tmp[tl++] = *c++;
+      }
+      while (c < e && tl > 0 && (((unsigned char)*c) & 0xC0) == 0x80) { tl--; c--; }   // never cut inside a UTF-8 character
       tmp[tl] = 0;
+      int rawTs[lyric_timing::MAX_WORDS], rawTe[lyric_timing::MAX_WORDS];
+      int rawTokens = ntag ? tokenize(tmp, rawTs, rawTe, lyric_timing::MAX_WORDS) : 0;
+      uint32_t tokT[lyric_timing::MAX_WORDS];
+      for (int i = 0; i < rawTokens; i++) tokT[i] = 0xFFFFFFFFUL;
+      for (int k = 0; k < ntag; k++) {                  // a tag belongs to the word it sits in or just before
+        for (int i = 0; i < rawTokens; i++) {
+          if (tagPos[k] < rawTe[i]) { if (tokT[i] == 0xFFFFFFFFUL) tokT[i] = tagMs[k]; break; }
+        }
+      }
       bool rtl = arabic::hasArabic(tmp);               // Urdu / Arabic: keep the UTF-8, marked with 0x1B, and shape it when drawing
       if (!rtl) { toLatin1(tmp); int a = 0, b = (int)strlen(tmp); while (tmp[a] == ' ') a++; while (b > a && tmp[b - 1] == ' ') b--; memmove(tmp, tmp + a, (size_t)(b - a)); tmp[b - a] = 0; if (b - a > 90) tmp[90] = 0; }
+      // real word times are only used when the cleaned text still has the same words and at least half of them are tagged
+      uint16_t wtOff = 0; uint8_t nw = 0;
+      if (rawTokens > 0) {
+        int fts[lyric_timing::MAX_WORDS], fte[lyric_timing::MAX_WORDS];
+        int finalTokens = tokenize(tmp, fts, fte, lyric_timing::MAX_WORDS);
+        int known = 0;
+        for (int i = 0; i < rawTokens; i++) if (tokT[i] != 0xFFFFFFFFUL) known++;
+        if (finalTokens == rawTokens && known * 2 >= rawTokens && wordUsed + rawTokens <= WORDT_CAP) {
+          uint32_t rel[lyric_timing::MAX_WORDS];
+          for (int i = 0; i < rawTokens; i++) rel[i] = tokT[i] == 0xFFFFFFFFUL ? 0xFFFFFFFFUL : (tokT[i] > times[0] ? tokT[i] - times[0] : 0);
+          for (int i = 0; i < rawTokens; i++) {
+            if (rel[i] != 0xFFFFFFFFUL) continue;
+            int pa = i - 1; while (pa >= 0 && rel[pa] == 0xFFFFFFFFUL) pa--;
+            int nb = i + 1; while (nb < rawTokens && rel[nb] == 0xFFFFFFFFUL) nb++;
+            if (pa >= 0 && nb < rawTokens) rel[i] = rel[pa] + (rel[nb] - rel[pa]) * (uint32_t)(i - pa) / (uint32_t)(nb - pa);
+            else if (pa >= 0) rel[i] = rel[pa] + 300UL * (uint32_t)(i - pa);
+            else rel[i] = rel[nb] * (uint32_t)i / (uint32_t)nb;
+          }
+          for (int i = 1; i < rawTokens; i++) if (rel[i] < rel[i - 1]) rel[i] = rel[i - 1];
+          wtOff = (uint16_t)wordUsed;
+          for (int i = 0; i < rawTokens; i++) wordT[wordUsed++] = (uint16_t)(rel[i] > 65535UL ? 65535UL : rel[i]);
+          nw = (uint8_t)rawTokens;
+        }
+      }
       int need = (int)strlen(tmp) + 1 + (rtl ? 1 : 0);
       if (poolUsed + need > POOL_BYTES) break;
       char *dst = pool + poolUsed;
@@ -158,7 +262,7 @@ int parseLrc(const char *lrc) {
       else memcpy(dst, tmp, strlen(tmp) + 1);
       uint16_t off = (uint16_t)poolUsed;
       poolUsed += need;
-      for (int i = 0; i < nt && lineCount < MAX_LINES; i++) lines[lineCount++] = {times[i], off};
+      for (int i = 0; i < nt && lineCount < MAX_LINES; i++) lines[lineCount++] = {times[i], off, wtOff, nw};
     }
     p = *eol ? eol + 1 : eol;
   }
@@ -733,6 +837,7 @@ void setLyricOffset(int ms) { lyricOffsetMs = ms; }
 
 bool getLyricsView(LyricsView &out, uint32_t now) {
   memset(&out, 0, sizeof(out));
+  out.focusWord = -1;
   StateGuard guard;
   drawnSince = true;                                   // the visualizer counts as the frame that lets the next request start
   out.haveTrack = haveTrack;
@@ -783,6 +888,7 @@ bool getLyricsView(LyricsView &out, uint32_t now) {
   strncpy(out.line, pool + lines[target].off, sizeof(out.line) - 1);
   out.lineStartMs = lines[target].ms;
   out.lineEndMs = target + 1 < lineCount ? lines[target + 1].ms : lines[target].ms + 4000;
+  out.focusWord = wordFocus(target, (int32_t)targetTime - (int32_t)out.lineStartMs, out.lineEndMs - out.lineStartMs);
   if (target + 1 < lineCount && pool[lines[target + 1].off]) {
     strncpy(out.nextLine, pool + lines[target + 1].off, sizeof(out.nextLine) - 1);
   }
@@ -975,21 +1081,18 @@ void drawDots(U8G2 &d, uint32_t now, int xShift) {      // bouncing dots for ins
   }
 }
 
-// One big lyric line, centered, wrapped to 2 rows. fMil = how far through the line we are (0..1000),
-// -1 = no focus effect (old line leaving, or plain title). The focused word is drawn inverted and a
-// bar under the text fills as the line is sung (word timing is estimated from the line length,
-// LRC files only carry line times).
+// One big lyric line, centered, wrapped to 2 rows. focusWord = index of the word being sung (see wordFocus()),
+// -1 = no focus effect (old line leaving, or plain title). The focused word is drawn inverted.
 // Urdu / Arabic line (stored with a leading 0x1B): shaped, right-to-left, up to 2 rows of 16 glyphs.
 // The focus word is inverted, the first word of the line is on the right.
-void drawBigRtl(U8G2 &d, const char *utf8, int xShift, int fMil) {
+void drawBigRtl(U8G2 &d, const char *utf8, int xShift, int focusWord) {
   arabic::Row rows[2];
   int totalWords = 0;
   int n = arabic::layoutRows(utf8, arabic::MAX_COLS, 2, rows, &totalWords);
   if (n == 0) return;
   int shown = 0;
   for (int r = 0; r < n; r++) shown += rows[r].nWords;
-  int focus = (fMil < 0 || shown == 0) ? -1 : (int)((int32_t)fMil * shown / 1000);
-  if (focus >= shown) focus = shown - 1;
+  int focus = (focusWord < 0 || shown == 0) ? -1 : (focusWord >= shown ? shown - 1 : focusWord);
   d.setFont(u8g2_font_unifont_t_urdu);
   for (int r = 0; r < n; r++) {
     int base = n == 1 ? 38 : 28 + r * 16;
@@ -1007,8 +1110,8 @@ void drawBigRtl(U8G2 &d, const char *utf8, int xShift, int fMil) {
   }
 }
 
-void drawBig(U8G2 &d, const char *text, int xShift, int fMil) {
-  if (text[0] == 0x1B) { drawBigRtl(d, text + 1, xShift, fMil); return; }
+void drawBig(U8G2 &d, const char *text, int xShift, int focusWord) {
+  if (text[0] == 0x1B) { drawBigRtl(d, text + 1, xShift, focusWord); return; }
   int len = (int)strlen(text);
   int tier = len <= 18 ? 0 : (len <= 40 ? 1 : 2);        // bold 7x13, normal 6x10, small 5x7 (up to 3 rows)
   d.setFont(tier == 0 ? u8g2_font_7x13B_tf : (tier == 1 ? u8g2_font_6x10_tf : u8g2_font_5x7_tf));
@@ -1019,11 +1122,7 @@ void drawBig(U8G2 &d, const char *text, int xShift, int fMil) {
   const int maxRows = tier == 2 ? 3 : 2;
   char row[3][26];
   int n = wrapText(text, cols, maxRows, row);
-  int total = 0;
-  for (int r = 0; r < n; r++) total += (int)strlen(row[r]);
-  int sung = fMil < 0 ? -1 : (int)((int32_t)fMil * total / 1000);     // characters sung so far
-  int focusAt = sung < 0 ? -1 : (sung >= total ? total - 1 : sung);
-  int g = 0;
+  int wordNo = 0;                                         // running word index over all rows
   for (int r = 0; r < n; r++) {
     int L = (int)strlen(row[r]);
     int base = tier == 2 ? 23 + r * 11 : (n == 1 ? 34 : 27 + r * 13);
@@ -1036,7 +1135,8 @@ void drawBig(U8G2 &d, const char *text, int xShift, int fMil) {
       memcpy(w, row[r] + i, (size_t)(j - i));
       w[j - i] = 0;
       int x = x0 + i * fw;
-      bool focus = focusAt >= 0 && g + i <= focusAt && focusAt < g + j + 1;
+      bool focus = focusWord >= 0 && wordNo == focusWord;
+      wordNo++;
       if (focus) {
         d.drawBox(x - 1, base - asc, (j - i) * fw + 2, bh);
         d.setDrawColor(0);
@@ -1047,7 +1147,6 @@ void drawBig(U8G2 &d, const char *text, int xShift, int fMil) {
       }
       i = j;
     }
-    g += L;
   }
 }
 
@@ -1135,11 +1234,7 @@ static void drawLocked(U8G2 &d, uint32_t now) {
       const char *txt = pool + lines[target].off;
       uint32_t ls = lines[target].ms;
       uint32_t span = target + 1 < lineCount ? lines[target + 1].ms - ls : 4000;
-      uint32_t dur = (uint32_t)(txt[0] == 0x1B ? strlen(txt) / 2 : strlen(txt)) * 105 + 500;
-      if (dur > span * 9 / 10) dur = span * 9 / 10;
-      if (dur < 400) dur = 400;
-      int rel = p - (int)ls;
-      int f = rel <= 0 ? 0 : (rel >= (int)dur ? 1000 : (int)((int64_t)rel * 1000 / (int)dur));
+      int f = wordFocus(target, p - (int)ls, span);
       drawBig(d, txt, inShift, f);
     }
     if (!noteOn && target >= 0 && strlen(pool + lines[target].off) <= 40 && pool[lines[target].off] != 0x1B &&

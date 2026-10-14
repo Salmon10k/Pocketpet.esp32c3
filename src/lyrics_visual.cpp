@@ -61,9 +61,9 @@ WordFrame selectWord(const spotify::LyricsView &v) {
   const char *text = v.line;
   if (text[0] == 0x1B) { out.rtl = true; text++; }          // Urdu / Arabic line: raw UTF-8, shaped when the word is drawn
 
-  int starts[20], lengths[20], count = 0;
+  int starts[24], lengths[24], count = 0;
   const char *p = text;
-  while (*p && count < 20) {
+  while (*p && count < 24) {
     while (*p == ' ') ++p;
     if (!*p) break;
     const char *start = p;
@@ -74,18 +74,9 @@ WordFrame selectWord(const spotify::LyricsView &v) {
   }
   if (!count) return out;
 
-  uint32_t span = v.lineEndMs > v.lineStartMs ? v.lineEndMs - v.lineStartMs : 4000;
-  uint32_t elapsed = v.positionMs > v.lineStartMs ? v.positionMs - v.lineStartMs : 0;
-  if (elapsed > span) elapsed = span;
-  uint32_t totalWeight = 0;
-  for (int i = 0; i < count; ++i) totalWeight += (uint32_t)(lengths[i] + 2);
-  uint32_t progress = (uint32_t)((uint64_t)elapsed * totalWeight / span);
-  uint32_t sum = 0;
-  int index = count - 1;
-  for (int i = 0; i < count; ++i) {
-    sum += (uint32_t)(lengths[i] + 2);
-    if (progress < sum) { index = i; break; }
-  }
+  // which word is being sung comes from spotify::getLyricsView(): real Enhanced-LRC word times when the
+  // lyrics have them, otherwise a syllable-based estimate with the last word held until the line ends
+  int index = v.focusWord < 0 ? 0 : (v.focusWord >= count ? count - 1 : v.focusWord);
   copyWord(text + starts[index], (size_t)lengths[index], out.word, sizeof(out.word));
   out.index = index;
   out.count = count;

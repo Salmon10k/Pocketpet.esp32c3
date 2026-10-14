@@ -25,6 +25,7 @@ struct LyricsView {
   uint32_t lineEndMs;
   char status[40];       // short text about what Spotify mode is doing ("connecting wifi", "finding lyrics", errors); empty = nothing to say
   bool statusBusy;       // true while it is still working (show animated dots)
+  int focusWord;         // index of the word being sung in `line` (real Enhanced-LRC times, else estimated); -1 = none
   char line[128];       // Urdu / Arabic lines start with the byte 0x1B and hold raw UTF-8
   char nextLine[128];
 };
