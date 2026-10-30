@@ -1,5 +1,31 @@
 # HANDOFF: read this first if you are an agent (or human) continuing the project
 
+## Project paused (2026-10-30)
+Salman paused the project. Do not start new work, features or refactors unless he says to resume.
+
+**State when paused**
+- Firmware on `main` (last commit before the pause: `b2318d5`, word timing in lyric lines). Hardware is the
+  protoboard build (ESP32-C3 Super Mini, SH1106 OLED, MPU6050, touch pad, three buttons). The TP4056 charger
+  module was found faulty (0.45 V drop under load), so the battery was not reattached; a protected
+  replacement was still to be bought.
+- Tested on the device: pet mode, stats, I2C swap, touch, Temperature, Magic 8-ball, Dice.
+- Written and host-checked only, never confirmed on hardware (see the Status table and the per-feature notes
+  below): Online mode, Spotify mode and its lyric worker, Lyrics visual, Quick connect, Wi-Fi fixes,
+  Urdu/Arabic lyrics, word timing, Snake, Flappy, Tilt Maze, Dino Runner, Fluid, Catch Water, Settings.
+  The `feature/lyrics-visualizer` branch history is described below; check `git branch -a` before assuming
+  it was merged.
+- Custom PCB: a ghost-shaped KiCad board was designed but is not finished or ordered. Everything about it
+  lives in `pcb/README.md` (outline SVG, KiCad placement script, layout coordinates and a list of schematic
+  problems to fix first, including the battery connector wired to the wrong net).
+- Not started: battery monitoring (GPIO3 divider), deep sleep with wake on touch, Pomodoro/Stopwatch,
+  Spirit level, Step counter, pet sleeps at night.
+
+**To resume**
+1. Ask Salman what he wants first. The safest start is to build with PlatformIO, flash, and report the
+   serial log and memory numbers for the untested modes.
+2. For the PCB, follow "To resume" in `pcb/README.md`.
+3. Keep the rules below (do not change pins, keep the pet animation code, no secrets in the repo).
+
 Owner: Salman (GitHub: Salmon10k). Student, new to soldering, builds on a protoboard, flashes with
 PlatformIO in VS Code on Windows. He tests on the real device and reports back, so keep instructions short
 and concrete. Casual tone is fine and preferred. He is on a free Claude plan with limited usage, which is

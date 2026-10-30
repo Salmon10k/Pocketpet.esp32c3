@@ -1,5 +1,11 @@
 # Pocketpet.esp32c3
 
+> **PROJECT PAUSED (2026-10-30).** Salman has put this on hold. Nothing is broken; it is just not being
+> worked on right now. The firmware on `main` is the last state, a lot of it (Online, Spotify, Lyrics visual,
+> games) was never fully tested on the device, and the custom PCB is designed but not finished or ordered.
+> See `HANDOFF.md` ("Project paused") and `pcb/README.md` for where things stand and how to resume.
+> Do not start new features unless Salman asks.
+
 Keychain-sized digital pet gadget built around an ESP32-C3 Super Mini with a 1.3" SH1106 OLED, MPU6050 motion sensor, touch input and three buttons.
 
 ## Current hardware wiring
