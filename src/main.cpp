@@ -2,6 +2,7 @@
 #include <Wire.h>
 #include <U8g2lib.h>
 #include <Preferences.h>
+#include <esp_system.h>
 #include "config.h"
 #include "fluid.h"
 #include "online.h"
@@ -1195,6 +1196,20 @@ void drawBar(int y, const char *label, float value) {
   display.drawStr(108, y + 8, num);
 }
 
+// Why the chip last restarted. BROWN = the supply dipped (usually the battery cannot feed the Wi-Fi radio).
+const char *resetReasonText() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON: return "power on";
+    case ESP_RST_SW: return "software";
+    case ESP_RST_PANIC: return "CRASH";
+    case ESP_RST_INT_WDT: case ESP_RST_TASK_WDT: case ESP_RST_WDT: return "watchdog";
+    case ESP_RST_BROWNOUT: return "BROWNOUT";
+    case ESP_RST_DEEPSLEEP: return "sleep";
+    case ESP_RST_EXT: return "reset pin";
+    default: return "other";
+  }
+}
+
 void drawStats() {
   char line[32];
   display.setFont(u8g2_font_7x13B_tf);
@@ -1205,6 +1220,10 @@ void drawStats() {
   display.setFont(u8g2_font_6x10_tf);
   snprintf(line, sizeof(line), "Pets: %lu", (unsigned long)pet.pets);
   display.drawStr(0, 60, line);
+  char rr[24];
+  snprintf(rr, sizeof(rr), "boot: %s", resetReasonText());
+  display.setFont(u8g2_font_5x7_tf);
+  display.drawStr(128 - display.getStrWidth(rr), 60, rr);
 }
 
 int settingsRow = 0;
@@ -1355,6 +1374,7 @@ SET_LOOP_TASK_STACK_SIZE(16 * 1024);   // TLS handshakes (Online, Spotify) run o
 
 void setup() {
   stamp("setup start");
+  stamp(resetReasonText());                                  // also printed with the boot log
 
   Serial.begin(115200);
 
