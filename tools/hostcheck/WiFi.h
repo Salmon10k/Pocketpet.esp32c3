@@ -19,7 +19,9 @@ struct WiFiC {
   int RSSI(int) { return 0; }
   String SSID() { return String(); }
   String SSID(int) { return String(); }
-  int scanNetworks(bool = false) { return 0; }
+  int scanNetworks(bool = false, bool = false, bool = false, uint32_t = 300) { return 0; }
+  bool setSleep(bool) { return true; }
+  void persistent(bool) {}
   int16_t scanComplete() { return 0; }
   void scanDelete() {}
   IPAddress localIP() { return IPAddress(); }

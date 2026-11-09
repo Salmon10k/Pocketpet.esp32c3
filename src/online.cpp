@@ -271,7 +271,22 @@ void copyStr(char *dst, size_t cap, const char *src) { snprintf(dst, cap, "%s", 
 #define WIFI_TX_POWER WIFI_POWER_8_5dBm
 #endif
 
+// Modem sleep (the Arduino default) makes the radio wake only at the access point's beacon interval, which adds
+// 100-300 ms to EVERY packet: a TLS handshake has ~6 round trips. While a mode is actively using the connection we
+// run the radio awake (lower latency, more current); while it only lingers idle we put modem sleep back.
+#ifndef WIFI_LOW_LATENCY
+#define WIFI_LOW_LATENCY 1                          // set to 0 in secrets.h to keep modem sleep always on (less current, slower)
+#endif
+int8_t psFast = -1;                                 // -1 = unknown (fresh connection)
+void updatePs(bool wantFast) {
+  if (!WIFI_LOW_LATENCY) wantFast = false;
+  if (psFast == (int8_t)wantFast || WiFi.status() != WL_CONNECTED) return;
+  WiFi.setSleep(!wantFast);
+  psFast = (int8_t)wantFast;
+}
+
 void radioOff() {
+  psFast = -1;
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
   wst = W_OFF;
@@ -280,6 +295,7 @@ void radioOff() {
 void startAttempt(uint32_t now) {
   attempt++;
   const Net &n = NETS[order[(attempt - 1) % orderLen]];
+  WiFi.persistent(false);                            // no flash write on every begin(): faster and no flash wear
   WiFi.mode(WIFI_STA);
   WiFi.setTxPower(WIFI_TX_POWER);
   WiFi.begin(n.ssid, n.pass);
@@ -327,8 +343,9 @@ void startScan(uint32_t now) {
   if (Serial) Serial.printf("wifi: +%lu ms scanning\n", (unsigned long)(now - sessionT0));
   attempt = 0;
   fastTry = false;
+  WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
-  WiFi.scanNetworks(true);                     // async, polled in tick()
+  WiFi.scanNetworks(true, false, false, 110);  // async, polled in tick(); 110 ms per channel instead of 300 (about 3x faster scan)
   wst = W_SCAN;
   scanStart = now;
 }
@@ -1189,6 +1206,7 @@ bool input(bool a, bool b, bool c, uint32_t now) {
 void tick(uint32_t now) {
   if (!session && !wifiHold) {                          // nobody is using the radio: let it linger, then switch it off
     if (wst == W_UP) {
+      updatePs(false);
       if ((int32_t)(now - lingerUntil) >= 0 || WiFi.status() != WL_CONNECTED) radioOff();
     } else if (wst != W_OFF) {
       radioOff();
@@ -1214,6 +1232,8 @@ void tick(uint32_t now) {
       if (Serial) Serial.printf("wifi: connected +%lu ms\n", (unsigned long)(now - sessionT0));
       fastTry = false;
       wst = W_UP;
+      psFast = -1;
+      updatePs(true);
       settleUntil = now + SETTLE_MS;
       startSntp(now);
     } else if (s == WL_CONNECT_FAILED || now - connectStart > (fastTry ? FAST_TIMEOUT_MS : CONNECT_TIMEOUT_MS)) {
@@ -1242,6 +1262,7 @@ void tick(uint32_t now) {
     beginSession(now);
     return;
   }
+  updatePs(true);
   if (!session) return;                                 // radio is only held for Spotify: no jobs
   if (needTime && timeValid() && now - ntpStartedAt > 1500) {
     needTime = false;

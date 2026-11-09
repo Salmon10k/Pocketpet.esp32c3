@@ -1,6 +1,7 @@
 #include "lyrics_visual.h"
 #include "spotify.h"
 #include "arabic_shape.h"
+#include "lyric_timing.h"
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
@@ -19,6 +20,10 @@ const uint32_t TRANS_MS = 190;     // screen transition (reveals the scene)
 int lastWordKey = -1;
 int lastScene = -1;
 uint32_t transitionAt = 0;
+uint32_t vclock = 0;                // visual clock: scenes and decorations run on this, scaled by the song's pace
+float tempo = 1.0f;                 // smoothed speed factor
+uint32_t lastDrawAt = 0;
+uint32_t gapSince = 0;              // when the current break (no words sung) started, 0 = not in a break
 int gKick = 0;                      // 0..256, decays after every new word; scenes use it as a "beat"
 
 struct Look {
@@ -47,6 +52,7 @@ struct WordFrame {
   int count;
   int key;
 };
+WordFrame lastFrame = {false, {0}, 0, 0, -1};   // last word shown, lingers when a break starts
 
 void copyWord(const char *src, size_t n, char *dst, size_t cap) {
   if (cap == 0) return;
@@ -546,7 +552,7 @@ void drawLetters(U8G2 &d, const char *s, int x0, int base, int fx, uint32_t age,
   }
 }
 
-void drawWord(U8G2 &d, const char *word, uint32_t now, const Look &lk, bool rtl, int wi, int wc, int key) {
+void drawWord(U8G2 &d, const char *word, uint32_t now, uint32_t vt, const Look &lk, bool rtl, int wi, int wc, int key) {
   char fitted[40];
   strncpy(fitted, word, sizeof(fitted) - 1);
   fitted[sizeof(fitted) - 1] = 0;
@@ -640,12 +646,12 @@ void drawWord(U8G2 &d, const char *word, uint32_t now, const Look &lk, bool rtl,
   int fg = boxInv ? 0 : 1;
 
   // ---- scene, negative, transition
-  drawScene(d, lk.scene, now, lk.seed);
+  drawScene(d, lk.scene, vt, lk.seed);
   if (negNow) { d.setDrawColor(2); d.drawBox(0, 0, 128, 64); d.setDrawColor(1); }
   drawTransition(d, lk.trans, age);
 
   // ---- decoration, box, text
-  drawDecor(d, lk.style, x, y, w, h, now, bgWhite ? 0 : 1);
+  drawDecor(d, lk.style, x, y, w, h, vt, bgWhite ? 0 : 1);
   d.setDrawColor(boxInv ? 1 : 0);
   bx(d, x, y, w, h);
   d.setDrawColor(fg);
@@ -657,7 +663,7 @@ void drawWord(U8G2 &d, const char *word, uint32_t now, const Look &lk, bool rtl,
     int tx = (128 - textW) / 2 + tdx, base = fy0 + baseOff + tdy;
     if (rtl) arabic::drawGlyphs(d, tx, base, glyphs, glyphCount);
     else if (lk.fx == 0) d.drawStr(tx, base, fitted);
-    else drawLetters(d, fitted, tx, base, lk.fx, age, now, lk.seed);
+    else drawLetters(d, fitted, tx, base, lk.fx, age, vt, lk.seed);
   }
 
   // ---- colour flipping on top: scan bar through the box, whole-screen flash, glitch band
@@ -679,11 +685,65 @@ void drawWord(U8G2 &d, const char *word, uint32_t now, const Look &lk, bool rtl,
   (void)key;
 }
 
+
+// ---- breaks: the song has lyrics but nobody is singing (intro, instrumental, blank line) --------------------
+// The current scene keeps running; the word box turns into a small box with three bouncing dots.
+void drawBreak(U8G2 &d, uint32_t now, uint32_t vt, const Look &lk, uint32_t sinceMs) {
+  int negNow = lk.neg == 1 ? 1 : (lk.neg == 2 ? (int)((now / 520) & 1U) : 0);
+  bool bgWhite = sceneInverted(lk.scene) != (negNow != 0);
+  drawScene(d, lk.scene, vt, lk.seed);
+  if (negNow) { d.setDrawColor(2); d.drawBox(0, 0, 128, 64); d.setDrawColor(1); }
+  int grow = (int)imin((int)sinceMs, 240) * 256 / 240;
+  int w = 8 + 40 * ease(grow) / 256, h = 3 + 20 * ease(grow) / 256;
+  int x = 64 - w / 2, y = 32 - h / 2;
+  drawDecor(d, lk.style, x, y, w, h, vt, bgWhite ? 0 : 1);
+  bool inv = bgWhite;
+  d.setDrawColor(inv ? 1 : 0); bx(d, x, y, w, h);
+  d.setDrawColor(inv ? 0 : 1); fr(d, x, y, w, h);
+  if (grow >= 200) {
+    for (int i = 0; i < 3; i++) {
+      int bob = sn((int)(vt / 3) - i * 40) * 4 / 127;
+      d.drawDisc(64 - 11 + i * 11, 32 + bob, 2);
+    }
+  }
+  d.setDrawColor(1);
+}
+
+// pace of the current line in syllables per second -> speed factor for the visual clock
+float paceFactor(const char *line, uint32_t spanMs) {
+  if (!line || !line[0] || spanMs < 300) return 1.0f;
+  const char *p = line[0] == 0x1B ? line + 1 : line;
+  int syl = 0;
+  while (*p) {
+    while (*p == ' ') ++p;
+    const char *s = p;
+    while (*p && *p != ' ') ++p;
+    if (p > s) syl += lyric_timing::syllables(s, (int)(p - s));
+  }
+  float rate = (float)syl * 1000.0f / (float)spanMs;            // ~3.5 syl/s is a normal pace
+  float f = rate / 3.5f;
+  return f < 0.55f ? 0.55f : (f > 1.9f ? 1.9f : f);
+}
+
+void advanceClock(uint32_t now, float target) {
+  uint32_t dt = lastDrawAt ? now - lastDrawAt : 0;
+  lastDrawAt = now;
+  if (dt > 120) dt = 120;                                         // a stall must not make the scene jump
+  float k = (float)dt / 700.0f;                                   // ~0.7 s to settle on a new pace
+  if (k > 1.0f) k = 1.0f;
+  tempo += (target - tempo) * k;
+  vclock += (uint32_t)((float)dt * tempo + 0.5f);
+}
+
 }  // namespace
 
 void enter() {
   lastWordKey = -1;
   lastScene = -1;
+  lastFrame.key = -1;
+  gapSince = 0;
+  tempo = 1.0f;
+  lastDrawAt = 0;
   transitionAt = millis();
   spotify::enter();
 }
@@ -692,15 +752,53 @@ void leave() {
   spotify::leave();
 }
 
+void rollLook(uint32_t k) {
+  int sc = (int)((mix(k, 1) >> 8) % (uint32_t)SCENE_COUNT);
+  if (sc == lastScene) sc = (sc + 1) % SCENE_COUNT;           // never the same scene twice in a row
+  lastScene = sc;
+  look.scene = sc;
+  look.seed = mix(k, 2) >> 4;
+  look.style = (int)(mix(k, 3) % 6U);
+  look.entry = (int)(mix(k, 4) % 6U);
+  look.trans = (int)(mix(k, 5) % 5U);
+  uint32_t fv = mix(k, 6) % 20U;
+  look.flip = fv < 9 ? 0 : fv < 13 ? 1 : fv < 16 ? 2 : 3;
+  uint32_t nv = mix(k, 7) % 8U;
+  look.neg = nv < 5 ? 0 : nv < 7 ? 1 : 2;
+  uint32_t tv = mix(k, 8) % 8U;
+  look.fx = tv < 2 ? 0 : tv < 4 ? 1 : tv < 6 ? 2 : 3;
+  look.big = (mix(k, 9) % 3U) == 0;
+  look.flash = (mix(k, 10) % 5U) == 0;
+}
+
 void draw(U8G2 &d, uint32_t now) {
   spotify::LyricsView view;
   spotify::getLyricsView(view, now);
 
-  if (!view.haveTrack || !view.lyricsReady || !view.line[0]) {
-    drawAmbient(d, now);                                       // quiet interlude, plus a small indicator of what it is waiting for
+  // no track, still loading or no synced lyrics at all: the quiet synthwave screen with the status pill
+  if (!view.haveTrack || (!view.lyricsReady && !view.inGap)) {
+    gapSince = 0;
+    drawAmbient(d, now);
     drawStatus(d, view.status, view.statusBusy, now);
     return;
   }
+
+  // a break in the singing (intro, instrumental, blank lyric line): keep the scene alive instead of dropping out
+  if (view.inGap) {
+    if (!gapSince) {
+      gapSince = now;
+      if (lastFrame.key < 0) { rollLook(view.gapEndMs); transitionAt = now; }   // intro: nothing sung yet
+    }
+    advanceClock(now, view.playing ? 0.7f : 0.3f);
+    uint32_t since = now - gapSince;
+    const uint32_t LINGER = 1200;                                 // the last word lingers (a held note fading out)
+    if (lastFrame.key >= 0 && since < LINGER)
+      drawWord(d, lastFrame.word, now, vclock, look, lastFrame.rtl, lastFrame.index, lastFrame.count, lastFrame.key);
+    else
+      drawBreak(d, now, vclock, look, lastFrame.key >= 0 ? since - LINGER : since);
+    return;
+  }
+  gapSince = 0;
 
   WordFrame word = selectWord(view);
   if (!word.word[0]) {
@@ -710,25 +808,11 @@ void draw(U8G2 &d, uint32_t now) {
   if (word.key != lastWordKey) {
     lastWordKey = word.key;
     transitionAt = now;
-    uint32_t k = (uint32_t)word.key;
-    int sc = (int)((mix(k, 1) >> 8) % (uint32_t)SCENE_COUNT);
-    if (sc == lastScene) sc = (sc + 1) % SCENE_COUNT;           // never the same scene twice in a row
-    lastScene = sc;
-    look.scene = sc;
-    look.seed = mix(k, 2) >> 4;
-    look.style = (int)(mix(k, 3) % 6U);
-    look.entry = (int)(mix(k, 4) % 6U);
-    look.trans = (int)(mix(k, 5) % 5U);
-    uint32_t fv = mix(k, 6) % 20U;
-    look.flip = fv < 9 ? 0 : fv < 13 ? 1 : fv < 16 ? 2 : 3;
-    uint32_t nv = mix(k, 7) % 8U;
-    look.neg = nv < 5 ? 0 : nv < 7 ? 1 : 2;
-    uint32_t tv = mix(k, 8) % 8U;
-    look.fx = tv < 2 ? 0 : tv < 4 ? 1 : tv < 6 ? 2 : 3;
-    look.big = (mix(k, 9) % 3U) == 0;
-    look.flash = (mix(k, 10) % 5U) == 0;
+    rollLook((uint32_t)word.key);
   }
-  drawWord(d, word.word, now, look, word.rtl, word.index, word.count, word.key);
+  lastFrame = word;
+  advanceClock(now, view.playing ? paceFactor(view.line, view.lineEndMs - view.lineStartMs) : 0.3f);
+  drawWord(d, word.word, now, vclock, look, word.rtl, word.index, word.count, word.key);
 }
 
 }  // namespace lyrics_visual

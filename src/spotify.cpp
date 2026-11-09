@@ -882,7 +882,12 @@ bool getLyricsView(LyricsView &out, uint32_t now) {
   const uint32_t targetTime = out.positionMs;
   int target = -1;
   for (int i = 0; i < lineCount && lines[i].ms <= targetTime; ++i) target = i;
-  if (target < 0 || !pool[lines[target].off]) return true;
+  if (target < 0 || !pool[lines[target].off]) {        // intro or a blank line: keep the visualizer alive, it shows a "break" state
+    out.inGap = true;
+    out.gapStartMs = target < 0 ? 0 : lines[target].ms;
+    out.gapEndMs = target + 1 < lineCount ? lines[target + 1].ms : (durMs > out.gapStartMs ? durMs : out.gapStartMs + 4000);
+    return true;
+  }
 
   out.lyricsReady = true;
   strncpy(out.line, pool + lines[target].off, sizeof(out.line) - 1);
