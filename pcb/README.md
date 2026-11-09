@@ -7,7 +7,7 @@ finished or ordered. Nothing here has been built, so treat every number as a pla
 - A KiCad 10 project (`Pocketpet`, kept on Salman's PC, not in this repo) with a schematic and a first
   rectangular PCB layout. Parts: ESP32-C3 Super Mini (`U1`), MPU6050 GY-521 (`U2`), TP4056 charger
   module (`U3`), 1.3" 4-pin I2C OLED (`DS1`), battery connector (`J1`), three push buttons (`SW1`-`SW3`).
-- Pins in the schematic follow `src/config.h` (buttons on GPIO 0/1/2, OLED on 8/9, MPU on 5/6, touch on 4).
+- Pins in the schematic follow `src/config.h` (buttons on GPIO 0/1/2, OLED and MPU both on the shared I2C bus 8/9 since 2026-11-09, touch on 4; the schematic may still show the MPU on 5/6).
   Salman fixed some pin differences in the PCB by hand, so check the PCB netlist against `src/config.h`
   before ordering anything.
 - `ghost_outline.svg`: the chosen board shape, a ghost, 52 x 65.5 mm (half-circle top, three-scallop

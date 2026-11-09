@@ -1,15 +1,9 @@
 #pragma once
 
-// ---- OLED: hardware I2C (Wire) ----
-// The OLED moves the most data (a full frame every refresh), so it gets the
-// real hardware I2C controller at 400 kHz. 8/9 are also the C3's default I2C pins.
-#define PIN_SDA_OLED 8
-#define PIN_SCL_OLED 9
-
-// ---- MPU6050: software I2C (SoftWire) ----
-// The MPU only reads 14 bytes at a time, so bit-banged I2C is plenty.
-#define PIN_SDA_MPU 5
-#define PIN_SCL_MPU 6
+// ---- One shared I2C bus: OLED (0x3C) + MPU6050 (0x68) ----
+// Both devices sit on the same hardware I2C bus (Wire) at 400 kHz. 8/9 are also the C3's default I2C pins.
+#define PIN_I2C_SDA 8
+#define PIN_I2C_SCL 9
 
 // ---- Buttons (wired to GND, internal pull-up used) ----
 #define PIN_BTN_A 2   // up / previous / tickle (in Pet mode)

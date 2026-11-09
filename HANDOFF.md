@@ -39,8 +39,7 @@ Pocketpet: a keychain-sized ESP32-C3 Super Mini gadget with a 1.3" SH1106 128x64
 ## Hardware map (source of truth: `src/config.h`)
 | Part | GPIO | Notes |
 |------|------|-------|
-| OLED SDA/SCL | 8 / 9 | HARDWARE I2C (`Wire`), 400 kHz, U8g2 `..._F_HW_I2C` |
-| MPU6050 SDA/SCL | 5 / 6 | SOFTWARE I2C (SoftWire), raw register reads |
+| OLED + MPU6050 SDA/SCL | 8 / 9 | ONE shared HARDWARE I2C bus (`Wire`), 400 kHz; OLED 0x3C (U8g2 `..._F_HW_I2C`), MPU6050 0x68 (raw register reads). Changed from separate buses (MPU on SoftWire GPIO 5/6) on 2026-11-09 at Salman's request; GPIO 5/6 are now free. |
 | Button A / B / C | 0 / 1 / 2 | to GND, internal pull-up, active LOW |
 | Touch pad OUT | 4 | HIGH when touched |
 | Free ADC pin | 3 | reserved for the battery voltage divider |
@@ -81,7 +80,7 @@ Current implementation uses a `Mode` enum and dispatches input/drawing in `main.
 ## Testing (important)
 - In the agent sandbox PlatformIO cannot download the ESP32 toolchain, so NOTHING can be compiled for the
   chip there. Run `tools/hostcheck/check.sh` instead (it has mock WiFi.h too): it syntax-checks every `src/*.cpp` against mock Arduino
-  headers plus the real U8g2 / SoftWire / ArduinoJson headers. Passing means "no typos / API mismatches",
+  headers plus the real U8g2 / ArduinoJson headers. Passing means "no typos / API mismatches",
   not "works on the board".
 - Salman builds with PlatformIO (check mark), flashes (arrow) and watches Serial Monitor at 115200.
   Ask him for build output / serial log when something fails. Each batch of work should end with a short
@@ -95,7 +94,7 @@ Salman confirms on the device.
 | Item | State |
 |------|-------|
 | Pet mode (moods, touch, shake, sleep), Stats, Motion test | DONE and TESTED (Salman: "looks good") |
-| I2C swap (OLED hw, MPU soft), touch on GPIO4 | DONE and TESTED |
+| I2C swap (OLED hw, MPU soft), touch on GPIO4 | DONE and TESTED. SUPERSEDED 2026-11-09: both now on one hardware bus GPIO 8/9 (host-checked only, not yet flashed) |
 | Expanded root/Tools/Games/Online menus | DONE (monolithic implementation) |
 | Temperature, Magic 8-ball, Dice | DONE and TESTED (Salman confirmed) |
 | Games: Snake, Flappy, procedural Tilt Maze, Dino Runner with crouch/obstacle variety | DONE in code, needs Salman hardware confirmation |

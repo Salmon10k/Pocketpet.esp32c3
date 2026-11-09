@@ -1,6 +1,5 @@
 #include <Arduino.h>
 #include <Wire.h>
-#include <SoftWire.h>
 #include <U8g2lib.h>
 #include <Preferences.h>
 #include "config.h"
@@ -10,13 +9,8 @@
 #include "lyrics_visual.h"
 #include "living_oled.h"
 
-// OLED: 1.3" SH1106 on hardware I2C (SDA = GPIO 8, SCL = GPIO 9).
+// OLED: 1.3" SH1106 and MPU6050 share one hardware I2C bus (Wire: SDA = GPIO 8, SCL = GPIO 9).
 U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
-
-// MPU6050 on software I2C (SDA = GPIO 5, SCL = GPIO 6).
-SoftWire mpuWire(PIN_SDA_MPU, PIN_SCL_MPU);
-uint8_t mpuTxBuf[16];
-uint8_t mpuRxBuf[32];
 
 // ---------------- Boot log ----------------
 String bootLog;
@@ -35,7 +29,7 @@ bool oledPresent() {
   return Wire.endTransmission() == 0;
 }
 
-// ---------------- MPU6050 (software I2C, raw registers) ----------------
+// ---------------- MPU6050 (shared hardware I2C, raw registers) ----------------
 struct Motion {
   float ax, ay, az;   // g
   float gx, gy, gz;   // deg/s
@@ -45,15 +39,15 @@ bool mpuOk = false;
 uint8_t mpuFails = 0;
 
 bool mpuPresent() {
-  mpuWire.beginTransmission(MPU_ADDR);
-  return mpuWire.endTransmission() == 0;
+  Wire.beginTransmission(MPU_ADDR);
+  return Wire.endTransmission() == 0;
 }
 
 bool mpuWriteReg(uint8_t reg, uint8_t val) {
-  mpuWire.beginTransmission(MPU_ADDR);
-  mpuWire.write(reg);
-  mpuWire.write(val);
-  return mpuWire.endTransmission() == 0;
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(reg);
+  Wire.write(val);
+  return Wire.endTransmission() == 0;
 }
 
 void mpuInit() {
@@ -63,15 +57,15 @@ void mpuInit() {
 }
 
 bool mpuRead() {
-  mpuWire.beginTransmission(MPU_ADDR);
-  mpuWire.write(0x3B);  // ACCEL_XOUT_H
-  if (mpuWire.endTransmission(false) != 0) return false;
-  if (mpuWire.requestFrom((uint8_t)MPU_ADDR, (uint8_t)14) != 14) return false;
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x3B);  // ACCEL_XOUT_H
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom((uint8_t)MPU_ADDR, (uint8_t)14) != 14) return false;
 
   int16_t r[7];
   for (int i = 0; i < 7; i++) {
-    uint8_t hi = mpuWire.read();
-    uint8_t lo = mpuWire.read();
+    uint8_t hi = Wire.read();
+    uint8_t lo = Wire.read();
     r[i] = (int16_t)((hi << 8) | lo);
   }
 
@@ -1250,7 +1244,7 @@ void drawMotion() {
 
   if (!mpuOk) {
     display.drawStr(0, 12, "MPU6050 not found");
-    display.drawStr(0, 24, "check SDA5 / SCL6");
+    display.drawStr(0, 24, "check SDA8 / SCL9");
     return;
   }
 
@@ -1376,23 +1370,17 @@ void setup() {
   btnC.lastRaw = btnC.stable = digitalRead(PIN_BTN_C);
   stamp("pins ready");
 
-  // OLED: hardware I2C on GPIO 8/9.
-  Wire.begin(PIN_SDA_OLED, PIN_SCL_OLED);
+  // One shared hardware I2C bus on GPIO 8/9 for the OLED and the MPU6050.
+  Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
   Wire.setTimeOut(20);
   Wire.setClock(400000);
   display.setBusClock(400000);
   oledUp = oledPresent();
   if (oledUp) display.begin();
-  stamp(oledUp ? "OLED found (hardware I2C)" : "OLED NOT found");
+  stamp(oledUp ? "OLED found (I2C 0x3C)" : "OLED NOT found");
 
-  // MPU6050: software I2C on GPIO 5/6.
-  mpuWire.setTxBuffer(mpuTxBuf, sizeof(mpuTxBuf));
-  mpuWire.setRxBuffer(mpuRxBuf, sizeof(mpuRxBuf));
-  mpuWire.setDelay_us(4);
-  mpuWire.setTimeout_ms(20);
-  mpuWire.begin();
   mpuInit();
-  stamp(mpuOk ? "mpu found (software I2C)" : "mpu NOT found");
+  stamp(mpuOk ? "mpu found (I2C 0x68)" : "mpu NOT found");
 
   loadStats();
   loadSettings();

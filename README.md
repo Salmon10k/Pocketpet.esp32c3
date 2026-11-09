@@ -10,23 +10,18 @@ Keychain-sized digital pet gadget built around an ESP32-C3 Super Mini with a 1.3
 
 ## Current hardware wiring
 
-**Important:** the OLED and MPU6050 are on **separate I2C buses**, and the roles are:
-
-- **OLED = hardware I2C (`Wire`)**, because it moves a full frame every refresh and needs the speed.
-- **MPU6050 = software I2C (SoftWire)**, because it only reads 14 bytes at a time.
+**Important:** the OLED and MPU6050 share **one hardware I2C bus (`Wire`)** on GPIO 8 (SDA) and GPIO 9 (SCL), 400 kHz. They have different addresses (OLED `0x3C`, MPU6050 `0x68`), so they coexist on the same two wires. (Until 2026-11-09 the MPU6050 was on its own software I2C bus on GPIO 5/6; that is gone and GPIO 5/6 are free.)
 
 | Part | Pin | ESP32-C3 GPIO | Notes |
 |------|-----|---------------|-------|
-| OLED SH1106 | SDA | **8** | Hardware I2C, 400 kHz |
-| OLED SH1106 | SCL | **9** | Hardware I2C, 400 kHz |
-| MPU6050 | SDA | **5** | Software I2C (SoftWire) |
-| MPU6050 | SCL | **6** | Software I2C (SoftWire) |
+| OLED SH1106 + MPU6050 | SDA | **8** | Shared hardware I2C, 400 kHz |
+| OLED SH1106 + MPU6050 | SCL | **9** | Shared hardware I2C, 400 kHz |
 | Button A | one leg to GND | **0** | Up / previous / tickle |
 | Button B | one leg to GND | **1** | Select / back |
 | Button C | one leg to GND | **2** | Down / next / boop |
 | Touch pad | OUT | **4** | TTP223-style, HIGH when touched (the pin next to 3V3) |
 
-The physical wiring did not change when the I2C roles were swapped. Only the drivers did.
+Wire the MPU6050 SDA/SCL to the same GPIO 8 / 9 pins as the OLED.
 
 ### I2C addresses
 - OLED: `0x3C`
@@ -105,7 +100,7 @@ Happiness and energy are saved to flash (about every 2 minutes when they changed
 ## Build
 
 1. Install PlatformIO in VS Code.
-2. Open this folder (it will download U8g2, SoftWire, AsyncDelay and ArduinoJson).
+2. Open this folder (it will download U8g2 and ArduinoJson).
 3. Plug the ESP32-C3 Super Mini in with a data-capable USB cable.
 4. Build and upload with PlatformIO.
 5. Board environment: `esp32-c3-supermini`.
@@ -150,7 +145,7 @@ When changing wiring, update `src/config.h` first.
 
 ## Notes for future development
 
-> **OLED = hardware I2C on GPIO 8/9. MPU6050 = software I2C (SoftWire) on GPIO 5/6.**
+> **OLED + MPU6050 share one hardware I2C bus on GPIO 8 (SDA) / 9 (SCL).**
 
 If another developer or AI agent continues this project, read `src/config.h` and this README before changing pin assignments or the bus setup. The pet logic is separated from the drawing: `currentFace()` decides the mood, `faceParams()` maps a mood to eye/mouth targets, and `drawPet()` eases toward them.
 
