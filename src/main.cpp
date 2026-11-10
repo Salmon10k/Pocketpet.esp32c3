@@ -9,6 +9,7 @@
 #include "spotify.h"
 #include "lyrics_visual.h"
 #include "living_oled.h"
+#include "launcher.h"
 
 // OLED: 1.3" SH1106 and MPU6050 share one hardware I2C bus (Wire: SDA = GPIO 8, SCL = GPIO 9).
 U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
@@ -38,6 +39,7 @@ struct Motion {
 } motion = {0, 0, 1, 0, 0, 0, 0};
 bool mpuOk = false;
 uint8_t mpuFails = 0;
+float gyroBias[3] = {0, 0, 0};          // deg/s, measured at boot while the device sits still
 
 bool mpuPresent() {
   Wire.beginTransmission(MPU_ADDR);
@@ -74,9 +76,9 @@ bool mpuRead() {
   motion.ay = r[1] / 16384.0f;
   motion.az = r[2] / 16384.0f;
   motion.tempC = r[3] / 340.0f + 36.53f;
-  motion.gx = r[4] / 131.0f;
-  motion.gy = r[5] / 131.0f;
-  motion.gz = r[6] / 131.0f;
+  motion.gx = r[4] / 131.0f - gyroBias[0];
+  motion.gy = r[5] / 131.0f - gyroBias[1];
+  motion.gz = r[6] / 131.0f - gyroBias[2];
   return true;
 }
 
@@ -193,7 +195,7 @@ const uint8_t BRIGHT_LEVELS[] = {8, 60, 150, 255};
 const char *BRIGHT_NAMES[] = {"Low", "Medium", "High", "Max"};
 const uint32_t SLEEP_MS[] = {0, 30000, 60000, 300000};
 const char *SLEEP_NAMES[] = {"Off", "30 s", "1 min", "5 min"};
-uint8_t setBright = 2, setSleep = 0, setFlip = 0, setLyric = 3;
+uint8_t setBright = 2, setSleep = 0, setFlip = 0, setLyric = 3, setMenu = 0;   // setMenu: 0 carousel, 1 tilt ring
 const int LYRIC_STEPS[] = {-500, -300, -150, 0, 150, 300, 500, 800};   // ms, + = lyrics earlier
 const int LYRIC_STEP_COUNT = 8;
 bool screenOff = false;
@@ -208,6 +210,7 @@ void loadSettings() {
   setSleep = constrain(prefs.getUChar("sleep", 0), 0, 3);
   setFlip = prefs.getUChar("flip", 0) ? 1 : 0;
   setLyric = constrain(prefs.getUChar("lyoff", 3), 0, LYRIC_STEP_COUNT - 1);
+  setMenu = prefs.getUChar("menu", 0) ? 1 : 0;
   spotify::setLyricOffset(LYRIC_STEPS[setLyric]);
 }
 
@@ -216,6 +219,7 @@ void saveSettings() {
   prefs.putUChar("sleep", setSleep);
   prefs.putUChar("flip", setFlip);
   prefs.putUChar("lyoff", setLyric);
+  prefs.putUChar("menu", setMenu);
 }
 
 void resetPet() {
@@ -486,6 +490,8 @@ void drawZzz(uint32_t now) {
   if (n >= 3) display.drawStr(118, 6, "Z");
 }
 
+void petTilt(float &tx, float &ty);   // defined with the tilt helper below
+
 void drawPet(uint32_t now) {
   Face face = currentFace(now);
   FaceParams p = faceParams(face, now);
@@ -512,8 +518,8 @@ void drawPet(uint32_t now) {
   eLower = approach(eLower, p.lower, 0.22f);
 
   // Where the pupils look: tilt wins, otherwise wander around now and then.
-  float tx = TILT_X_SIGN * constrain((int)(motion.ay * 10), -7, 7);
-  float ty = TILT_Y_SIGN * constrain((int)(motion.ax * 10), -7, 7);
+  float tx, ty;
+  petTilt(tx, ty);
   bool tilted = (fabsf(tx) + fabsf(ty)) > 2.0f;
   if (!tilted) {
     if (now >= nextWanderAt) {
@@ -572,7 +578,7 @@ enum Mode {
   MODE_CATCH
 };
 
-Mode mode = MODE_MENU;
+Mode mode = MODE_PET;          // the pet is the home / idle screen; B opens the launcher
 
 const char *rootItems[] = {"Pet", "Fluid", "Stats", "Motion test", "Tools", "Games", "Online", "Spotify", "Lyrics visual", "Living OLED", "Settings"};
 const int ROOT_COUNT = 11;
@@ -712,6 +718,27 @@ struct TiltState {
   float lastWz;                  // previous gyro spin, for the angular acceleration kick
 } tilt = {false, 0, 0, 0, 0, false, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 0};
 
+// Works out the screen axes from a gravity reading (g, device frame) taken while the device is held still.
+// Called by tiltBegin()'s calibration, by the launcher when it opens and by the background auto-level.
+void tiltApplyPose(float mx, float my, float mz) {
+  float inplane = sqrtf(mx * mx + my * my);
+  if (inplane >= 0.18f) {
+    tilt.autoAxes = true;
+    tilt.dX = -mx / inplane;       // gravity points toward the bottom of the screen
+    tilt.dY = -my / inplane;
+    if (mz >= 0) { tilt.rX = -tilt.dY; tilt.rY = tilt.dX; }   // screen faces the user
+    else         { tilt.rX = tilt.dY;  tilt.rY = -tilt.dX; }  // sensor mounted facing away
+    tilt.down0 = inplane;
+    tilt.zSign = (mz >= 0) ? 1.0f : -1.0f;
+    tilt.scale = 1.0f / fmaxf(0.35f, sqrtf(fmaxf(0.0f, 1.0f - inplane * inplane)));
+  } else {
+    tilt.autoAxes = false;         // held nearly flat: use the fixed axis mapping from config.h
+    tilt.fx0 = mx; tilt.fy0 = my;
+    tilt.scale = 1.0f;
+    tilt.down0 = 0.6f;
+  }
+}
+
 void tiltBegin() {
   tilt.calibrating = true;
   tilt.samples = 0;
@@ -733,23 +760,7 @@ void tiltUpdate() {
   if (tilt.calibrating) {
     tilt.sx += motion.ax; tilt.sy += motion.ay; tilt.sz += motion.az;
     if (++tilt.samples >= 25) {        // 0.5 s of readings
-      float mx = tilt.sx / tilt.samples, my = tilt.sy / tilt.samples, mz = tilt.sz / tilt.samples;
-      float inplane = sqrtf(mx * mx + my * my);
-      if (inplane >= 0.18f) {
-        tilt.autoAxes = true;
-        tilt.dX = -mx / inplane;       // gravity points toward the bottom of the screen
-        tilt.dY = -my / inplane;
-        if (mz >= 0) { tilt.rX = -tilt.dY; tilt.rY = tilt.dX; }   // screen faces the user
-        else         { tilt.rX = tilt.dY;  tilt.rY = -tilt.dX; }  // sensor mounted facing away
-        tilt.down0 = inplane;
-        tilt.zSign = (mz >= 0) ? 1.0f : -1.0f;
-        tilt.scale = 1.0f / fmaxf(0.35f, sqrtf(fmaxf(0.0f, 1.0f - inplane * inplane)));
-      } else {
-        tilt.autoAxes = false;         // held nearly flat: use the fixed axis mapping from config.h
-        tilt.fx0 = mx; tilt.fy0 = my;
-        tilt.scale = 1.0f;
-        tilt.down0 = 0.6f;
-      }
+      tiltApplyPose(tilt.sx / tilt.samples, tilt.sy / tilt.samples, tilt.sz / tilt.samples);
       tilt.calibrating = false;
     }
     return;
@@ -779,6 +790,72 @@ void tiltUpdate() {
   tilt.rgy = constrain(rawgy, -3.0f, 3.0f);
   tilt.sgx += (tilt.rgx - tilt.sgx) * 0.06f;
   tilt.sgy += (tilt.rgy - tilt.sgy) * 0.06f;
+}
+
+// ---------------- Background calibration (runs in every mode) ----------------
+// 1. Gyro bias: for the first second the gyro offsets are averaged while the device is still and subtracted afterwards.
+// 2. Auto-level: a slow average of the gravity reading is kept while the device is calm. Once it has been calm for
+//    0.5 s the screen axes ("which way is down") are worked out from it; in Pet mode they are worked out again
+//    whenever the device has been held still for LEVEL_HOLD samples in a clearly different pose, so the pet's eyes
+//    and the tilt menu always measure from how the device is being held, however the MPU6050 sits on the board.
+const int LEVEL_HOLD = 75;                // samples at 50 Hz (1.5 s) before a new pose replaces the old one in Pet mode
+struct LevelState {
+  float x, y, z;                          // calm-gravity average
+  bool have, applied;
+  uint16_t calm;                          // consecutive calm samples
+  float px, py, pz;                       // the pose the tilt axes were last built from
+  uint8_t gyN;                            // gyro-bias samples collected (0..50, 50 = done)
+  float gsx, gsy, gsz;
+} lvl = {0, 0, 1, false, false, 0, 0, 0, 1, 0, 0, 0, 0};
+
+void motionBackground() {
+  float amag = sqrtf(motion.ax * motion.ax + motion.ay * motion.ay + motion.az * motion.az);
+  float dev = fabsf(amag - 1.0f);
+  float spin = fabsf(motion.gx) + fabsf(motion.gy) + fabsf(motion.gz);
+  bool calm = dev < 0.08f && spin < 40.0f;
+
+  if (lvl.gyN < 50) {                                      // gyro bias (motion.g* is still unbiased here)
+    if (calm) {
+      lvl.gsx += motion.gx; lvl.gsy += motion.gy; lvl.gsz += motion.gz;
+      if (++lvl.gyN == 50) { gyroBias[0] = lvl.gsx / 50; gyroBias[1] = lvl.gsy / 50; gyroBias[2] = lvl.gsz / 50; }
+    } else { lvl.gyN = 0; lvl.gsx = lvl.gsy = lvl.gsz = 0; }
+  }
+
+  if (!calm) { lvl.calm = 0; return; }
+  if (!lvl.have) { lvl.x = motion.ax; lvl.y = motion.ay; lvl.z = motion.az; lvl.have = true; }
+  else { lvl.x += (motion.ax - lvl.x) * 0.12f; lvl.y += (motion.ay - lvl.y) * 0.12f; lvl.z += (motion.az - lvl.z) * 0.12f; }
+  if (lvl.calm < 60000) lvl.calm++;
+  if (tilt.calibrating) return;                            // a game is calibrating on its own
+
+  bool apply = false;
+  if (!lvl.applied) apply = lvl.calm >= 25;                // first pose after boot
+  else if (mode == MODE_PET && lvl.calm >= LEVEL_HOLD) {   // idle: follow how the device is being held
+    float dot = lvl.x * lvl.px + lvl.y * lvl.py + lvl.z * lvl.pz;   // both are ~1 g long, so dot ~ cos(angle)
+    apply = dot < 0.985f;                                  // more than ~10 degrees away from the pose in use
+  }
+  if (apply) {
+    tiltApplyPose(lvl.x, lvl.y, lvl.z);
+    lvl.px = lvl.x; lvl.py = lvl.y; lvl.pz = lvl.z;
+    lvl.applied = true;
+  }
+}
+
+// Where the pet looks: tilt measured from the calibrated pose, or the raw axes until a pose exists.
+void petTilt(float &tx, float &ty) {
+  if (lvl.applied && tilt.autoAxes && !tilt.calibrating) {
+    tx = constrain(tilt.tx * 10.0f, -7.0f, 7.0f);
+    ty = constrain(tilt.ty * 10.0f, -7.0f, 7.0f);
+  } else {
+    tx = TILT_X_SIGN * constrain((int)(motion.ay * 10), -7, 7);
+    ty = TILT_Y_SIGN * constrain((int)(motion.ax * 10), -7, 7);
+  }
+}
+
+// The launcher measures tilt from the pose the device was in just before the button press.
+void levelForLauncher() {
+  if (lvl.have) tiltApplyPose(lvl.x, lvl.y, lvl.z);
+  else tiltBegin();
+  tilt.tx = tilt.ty = 0;
 }
 
 // Small banner (black box, white text) drawn over whatever is on screen.
@@ -1174,9 +1251,6 @@ void drawMenuList(const char *title, const char *items[], int count, int selecte
   display.drawStr(0, 63, "A up   B ok   C down");
 }
 
-void drawMenu() {
-  drawMenuList("POCKETPET", rootItems, ROOT_COUNT, menuIndex);
-}
 
 void drawToolsMenu() {
   drawMenuList("TOOLS", toolsItems, TOOLS_COUNT, submenuIndex);
@@ -1229,7 +1303,7 @@ void drawStats() {
 int settingsRow = 0;
 bool resetArmed = false;
 uint32_t settingsMsgUntil = 0;
-const int SETTINGS_ROWS = 6;   // brightness, auto-off, flip, lyrics sync, reset pet, back
+const int SETTINGS_ROWS = 7;   // brightness, auto-off, flip, menu style, lyrics sync, reset pet, back
 
 void drawSettings(uint32_t now) {
   display.setFont(u8g2_font_7x13B_tf);
@@ -1237,10 +1311,10 @@ void drawSettings(uint32_t now) {
   display.drawHLine(0, 15, 128);
   display.setFont(u8g2_font_6x10_tf);
 
-  const char *labels[SETTINGS_ROWS] = {"Brightness", "Screen off", "Flip screen", "Lyrics sync", "Reset pet", "Back"};
+  const char *labels[SETTINGS_ROWS] = {"Brightness", "Screen off", "Flip screen", "Menu style", "Lyrics sync", "Reset pet", "Back"};
   char lyricVal[12];
   snprintf(lyricVal, sizeof(lyricVal), LYRIC_STEPS[setLyric] > 0 ? "+%dms" : "%dms", LYRIC_STEPS[setLyric]);
-  const char *vals[SETTINGS_ROWS] = {BRIGHT_NAMES[setBright], SLEEP_NAMES[setSleep], setFlip ? "On" : "Off", lyricVal,
+  const char *vals[SETTINGS_ROWS] = {BRIGHT_NAMES[setBright], SLEEP_NAMES[setSleep], setFlip ? "On" : "Off", setMenu ? "Tilt ring" : "Carousel", lyricVal,
                                      resetArmed ? "Sure? B=yes" : "", ""};
   const int visible = 4;
   int first = settingsRow - visible + 1;
@@ -1351,6 +1425,10 @@ void enterMode(Mode m) {
     lastActivity = now;
     lastInteraction = now;
     overlay = OV_NONE;
+  }
+  if (m == MODE_MENU) {                       // launcher: tilt is measured from the pose the device was in a moment ago
+    levelForLauncher();
+    launcher::enter(constrain(menuIndex - 1, 0, launcher::APP_COUNT - 1), setMenu, millis());
   }
   if (m == MODE_ONLINE) online::enter();
   if (m == MODE_SPOTIFY) spotify::enter();
@@ -1501,6 +1579,8 @@ void loop() {
     if (mpuRead()) {
       mpuFails = 0;
       motionSeq++;
+      motionBackground();
+      tiltUpdate();
 
       float amag = sqrtf(motion.ax * motion.ax + motion.ay * motion.ay + motion.az * motion.az);
       float dev = fabsf(amag - 1.0f);
@@ -1581,31 +1661,49 @@ void loop() {
   }
 
   // Input handling.
+  if (mode == MODE_MENU && now - launcher::lastInputAt() > 20000) {     // nobody touches the launcher: back to the pet
+    menuIndex = 0;
+    enterMode(MODE_PET);
+  }
   if (mode == MODE_MENU) {
-    if (a) menuIndex = (menuIndex + ROOT_COUNT - 1) % ROOT_COUNT;
-    if (c) menuIndex = (menuIndex + 1) % ROOT_COUNT;
-    if (b) {
-      if (menuIndex == 0) enterMode(MODE_PET);
-      else if (menuIndex == 1) enterMode(MODE_FLUID);
-      else if (menuIndex == 2) enterMode(MODE_STATS);
-      else if (menuIndex == 3) enterMode(MODE_MOTION);
-      else if (menuIndex == 4) {
-        submenuIndex = 0;
-        enterMode(MODE_TOOLS);
-      } else if (menuIndex == 5) {
-        submenuIndex = 0;
-        enterMode(MODE_GAMES);
-      } else if (menuIndex == 6) {
-        submenuIndex = 0;
-        enterMode(MODE_ONLINE);
-      } else if (menuIndex == 7) {
-        enterMode(MODE_SPOTIFY);
-      } else if (menuIndex == 8) {
-        enterMode(MODE_LYRICS_VISUAL);
-      } else if (menuIndex == 9) {
-        enterMode(MODE_LIVING_OLED);
+    // B: short press (on release) opens the highlighted app, hold 0.7 s goes back to the pet.
+    static bool menuHeld = false, menuLong = false;
+    bool bShort = false;
+    if (b) { menuHeld = true; menuLong = false; }
+    if (menuHeld) {
+      if (btnB.stable == LOW) {
+        if (!menuLong && now - btnB.changedAt >= 700) { menuLong = true; menuIndex = 0; enterMode(MODE_PET); }
       } else {
-        enterMode(MODE_SETTINGS);
+        if (!menuLong) bShort = true;
+        menuHeld = false;
+      }
+    }
+    if (mode == MODE_MENU) {
+      bool tiltOk = mpuOk && !tilt.calibrating && tilt.autoAxes;
+      int app = launcher::input(a, bShort, c, now, tilt.tx, tilt.ty, tiltOk);
+      if (app >= 0) {
+        menuIndex = app + 1;                                           // rootItems index: 1 = Fluid ... 10 = Settings
+        if (menuIndex == 1) enterMode(MODE_FLUID);
+        else if (menuIndex == 2) enterMode(MODE_STATS);
+        else if (menuIndex == 3) enterMode(MODE_MOTION);
+        else if (menuIndex == 4) {
+          submenuIndex = 0;
+          enterMode(MODE_TOOLS);
+        } else if (menuIndex == 5) {
+          submenuIndex = 0;
+          enterMode(MODE_GAMES);
+        } else if (menuIndex == 6) {
+          submenuIndex = 0;
+          enterMode(MODE_ONLINE);
+        } else if (menuIndex == 7) {
+          enterMode(MODE_SPOTIFY);
+        } else if (menuIndex == 8) {
+          enterMode(MODE_LYRICS_VISUAL);
+        } else if (menuIndex == 9) {
+          enterMode(MODE_LIVING_OLED);
+        } else {
+          enterMode(MODE_SETTINGS);
+        }
       }
     }
   } else if (mode == MODE_TOOLS) {
@@ -1633,8 +1731,9 @@ void loop() {
       if (settingsRow == 0) { setBright = (setBright + 1) % 4; applyScreen(); saveSettings(); }
       else if (settingsRow == 1) { setSleep = (setSleep + 1) % 4; saveSettings(); }
       else if (settingsRow == 2) { setFlip ^= 1; applyScreen(); saveSettings(); }
-      else if (settingsRow == 3) { setLyric = (setLyric + 1) % LYRIC_STEP_COUNT; spotify::setLyricOffset(LYRIC_STEPS[setLyric]); saveSettings(); }
-      else if (settingsRow == 4) {
+      else if (settingsRow == 3) { setMenu ^= 1; saveSettings(); }
+      else if (settingsRow == 4) { setLyric = (setLyric + 1) % LYRIC_STEP_COUNT; spotify::setLyricOffset(LYRIC_STEPS[setLyric]); saveSettings(); }
+      else if (settingsRow == 5) {
         if (resetArmed) { resetPet(); resetArmed = false; settingsMsgUntil = millis() + 1500; }
         else resetArmed = true;
       } else enterMode(MODE_MENU);
@@ -1733,7 +1832,7 @@ void loop() {
     display.clearBuffer();
 
     if (mode == MODE_MENU) {
-      drawMenu();
+      launcher::draw(display, now);
     } else if (mode == MODE_PET) {
       drawPet(now);
       online::drawPetBadge(display);   // tiny weather/air/night icons from cached Online data

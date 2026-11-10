@@ -34,8 +34,12 @@ Wire the MPU6050 SDA/SCL to the same GPIO 8 / 9 pins as the OLED.
 
 ## Current firmware
 
-### Menu
-Pet, Fluid, Stats, Motion test, Tools, Games, Online, Spotify, Settings (brightness, screen auto-off, flip screen, lyrics sync, reset pet). Tools contains Temperature. Games contains Magic 8-ball, Dice, Snake, Flappy, procedurally generated Tilt Maze maps, and an upgraded Dino Runner with jumping, crouching, cactus clusters and flying birds. Online has 12 screens that need the internet (see below). Copy `src/secrets.example.h` to `src/secrets.h` and set `WIFI_SSID` / `WIFI_PASSWORD` locally first. The touch pad only works in Pet mode.
+### Home and menu
+The **pet is the home screen**: it is what you see when the keychain turns on and where it returns to when you leave it alone (the launcher goes back to the pet after 20 s without input; holding B in the launcher also goes home). **Press B on the pet** to open the launcher, which has two styles you pick in **Settings > Menu style**:
+- **Carousel** (default): big icons slide in from the right; **A** = previous, **C** = next, **B** = open.
+- **Tilt ring**: the apps sit on a ring; **tilt the keychain toward an app** to highlight it, **B** opens it (A/C also step through them).
+
+In the launcher: Fluid, Stats, Motion test, Tools, Games, Online, Spotify, Visualizer (Lyrics visual), Living OLED, Settings. While it starts, the MPU6050 calibrates itself in the background (gyro offsets, and which way is "down" from gravity), so tilt works however the sensor sits on the board and however you hold the keychain; in Pet mode it re-levels itself when you hold it still in a new pose. Settings has brightness, screen auto-off, flip screen, menu style, lyrics sync and reset pet. Tools contains Temperature. Games contains Magic 8-ball, Dice, Snake, Flappy, procedurally generated Tilt Maze maps, and an upgraded Dino Runner with jumping, crouching, cactus clusters and flying birds. Online has 12 screens that need the internet (see below). Copy `src/secrets.example.h` to `src/secrets.h` and set `WIFI_SSID` / `WIFI_PASSWORD` locally first. The touch pad only works in Pet mode.
 
 ### Online mode
 Wi-Fi stays **off** everywhere except Online mode. Entering Online connects **once** (up to 3 automatic attempts, then each request is retried up to 3 times for random network hiccups), fetches everything for every screen in one go, and stays connected while you browse. Leaving Online switches the radio off. The list header shows the state: `wifi 2/3`, `sync 4/9`, `online`, `offline`. Every screen shows how old its data is (top right). If a refresh fails you keep the last good data.
