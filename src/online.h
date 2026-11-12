@@ -14,10 +14,10 @@ enum PetHint : uint8_t {
   HINT_NIGHT = 8    // sun is down
 };
 
-void enter();                                          // entering Online mode (shows the list)
+void enter(int menuStyle = 0);                         // entering Online mode (shows the list; 0 = carousel, 1 = tilt ring)
 void leave();                                          // leaving Online mode: cancels jobs, radio off
 void tick(uint32_t now);                               // call every loop(); runs at most one request per call
-bool input(bool a, bool b, bool c, uint32_t now);      // returns true when the user chose Back
+bool input(bool a, bool b, bool c, uint32_t now, float tiltX = 0, float tiltY = 0, bool tiltOk = false);   // returns true when the user chose Back
 void draw(U8G2 &d, uint32_t now);
 
 // Shared radio for other modes (Spotify). Online's own tick drives the connection state machine.

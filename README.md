@@ -39,7 +39,21 @@ The **pet is the home screen**: it is what you see when the keychain turns on an
 - **Carousel** (default): big icons slide in from the right; **A** = previous, **C** = next, **B** = open.
 - **Tilt ring**: the apps sit on a ring; **tilt the keychain toward an app** to highlight it, **B** opens it (A/C also step through them).
 
-In the launcher: Fluid, Stats, Motion test, Tools, Games, Online, Spotify, Visualizer (Lyrics visual), Living OLED, Settings. While it starts, the MPU6050 calibrates itself in the background (gyro offsets, and which way is "down" from gravity), so tilt works however the sensor sits on the board and however you hold the keychain; in Pet mode it re-levels itself when you hold it still in a new pose. Settings has brightness, screen auto-off, flip screen, menu style, lyrics sync and reset pet. Tools contains Temperature. Games contains Magic 8-ball, Dice, Snake, Flappy, procedurally generated Tilt Maze maps, and an upgraded Dino Runner with jumping, crouching, cactus clusters and flying birds. Online has 12 screens that need the internet (see below). Copy `src/secrets.example.h` to `src/secrets.h` and set `WIFI_SSID` / `WIFI_PASSWORD` locally first. The touch pad only works in Pet mode.
+In the launcher: Fluid, Stats, Motion test, Tools, Games, Online, Spotify, Visualizer (Lyrics visual), Living OLED, Settings. While it starts, the MPU6050 calibrates itself in the background (gyro offsets, and which way is "down" from gravity), so tilt works however the sensor sits on the board and however you hold the keychain; in Pet mode it re-levels itself when you hold it still in a new pose. Every sub-menu (Tools, Games, Settings and the Online list) uses the same carousel / tilt-ring look as the home screen: **A/C** move, short **B** opens, **hold B** goes up one level, and each one ends with a **Back** item. Settings shows the current value in a pill under the name (brightness, screen auto-off, flip screen, menu style, lyrics sync, reset pet); Games shows your best score. Tools contains Temperature, Magic 8-ball and Dice (shake the keychain to roll / ask).
+
+### Games
+Built for the three buttons and the MPU6050. Best scores are saved.
+
+| Game | Controls |
+|------|----------|
+| **Star Blaster** (side-scrolling shooter: drones, gunships, splitting rocks, power-ups) | tilt flies the ship, **A** shoots (hold = rapid fire), **C** = smart bomb |
+| **Sniper** (night city, scope with sway; enemies pop up in windows, survive 3 misses) | tilt swings the scope, **A** fires (bolt action), hold **C** to steady your breath and zoom 2x |
+| **Road Rush** (pseudo-3D racer, beat the clock, checkpoints add time) | tilt steers (bends push you outwards), **A** nitro, **C** brake |
+| **Pinball** (the table lies on its side, flippers on the right edge) | **A** upper flipper, **C** lower flipper, shake the keychain to nudge the ball (nudge too much = TILT) |
+| **Tilt Maze** | tilt, **A** re-zero, **C** new maze |
+| **Snake** | tilt to steer (or **A** left / **C** right) |
+
+Online has 12 screens that need the internet (see below). Copy `src/secrets.example.h` to `src/secrets.h` and set `WIFI_SSID` / `WIFI_PASSWORD` locally first. The touch pad only works in Pet mode.
 
 ### Online mode
 Wi-Fi stays **off** everywhere except Online mode. Entering Online connects **once** (up to 3 automatic attempts, then each request is retried up to 3 times for random network hiccups), fetches everything for every screen in one go, and stays connected while you browse. Leaving Online switches the radio off. The list header shows the state: `wifi 2/3`, `sync 4/9`, `online`, `offline`. Every screen shows how old its data is (top right). If a refresh fails you keep the last good data.
@@ -140,7 +154,7 @@ When changing wiring, update `src/config.h` first.
 - [x] Verify current firmware on hardware
 - [ ] Try the RoboEyes library for the eyes (optional, only if the current look is not liked)
 - [x] Temperature mode
-- [x] Game mode (Magic 8-ball + Dice)\n- [x] Mini-games (Snake, Flappy, generated Tilt Maze, Dino Runner with jump/crouch and varied obstacles)\n- [x] Touch pad (Pet mode only)\n- [x] Optional Wi-Fi NTP clock (credentials must be configured locally in ignored `src/secrets.h`)
+- [x] Game mode (Magic 8-ball + Dice)\n- [x] Games (Star Blaster, Sniper, Road Rush, Pinball, generated Tilt Maze, tilt Snake)\n- [x] Touch pad (Pet mode only)\n- [x] Optional Wi-Fi NTP clock (credentials must be configured locally in ignored `src/secrets.h`)
 - [x] Wi-Fi NTP clock
 - [x] Online mode: weather, forecast, AQI, currency, world clocks, fact, advice, moon, net status, ISS, GitHub (in code, host-checked, not yet tested on the device)
 - [ ] Pet sleeps at night

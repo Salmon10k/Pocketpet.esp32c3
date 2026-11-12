@@ -1,7 +1,9 @@
 # HANDOFF: read this first if you are an agent (or human) continuing the project
 
-## Project paused (2026-10-30)
+## Project paused (2026-10-30), resumed for one task on 2026-11-12
 Salman paused the project. Do not start new work, features or refactors unless he says to resume.
+On 2026-11-12 he asked for a games + menus revamp (see "Games and menu revamp" at the bottom); that is done in code
+and host-tested, not yet flashed. Otherwise the pause still stands.
 
 **State when paused**
 - Firmware on `main` (last commit before the pause: `b2318d5`, word timing in lyric lines). Hardware is the
@@ -52,7 +54,9 @@ GPIO 8/9 are strapping pins, GPIO 0-5 are the only deep-sleep wake pins on the C
 - `src/online.h` / `src/online.cpp`: the whole Online mode. Own state (Wi-Fi state machine, per-request cache, 12 screens). main.cpp only calls `online::enter/leave/tick/input/draw/drawPetBadge/takeTreats`. See "Online mode" below.
 - `src/spotify.h` / `src/spotify.cpp`: Spotify mode (MODE_SPOTIFY, root menu index 7). Borrows the radio from online.cpp through `online::wifiAcquire/wifiRelease/wifiUp/wifiStatusText`; online's tick drives the connection while `wifiHold` is set, but runs no jobs unless `session` (Online mode) is open.
 - `tools/spotify_auth.py`: PKCE login helper run on the PC, writes SPOTIFY_CLIENT_ID / SPOTIFY_REFRESH_TOKEN into secrets.h.
-- `src/launcher.h` / `launcher.cpp`: the home menu (carousel + tilt ring), 10 procedural icons (`drawIcon`, any size/animated), selection state. Pure UI: main.cpp starts the apps. `src/gfx.h` / `gfx.cpp`: clipped primitives (px/line/circle/disc/arc/rframe...) that are safe at any coordinate (U8g2 coordinates are unsigned 8-bit).
+- `src/games.h` / `games.cpp`: Star Blaster, Sniper, Road Rush, Pinball (self-contained; main.cpp hands in an `Input` struct with buttons, calibrated tilt and shake, and owns the tilt calibration).
+- `tools/gamepreview/`: PC harness (real U8g2 on the PC) that renders menus/games to PNG sheets, runs scripted "AI players" and a sanitizer fuzz test. See "Games and menu revamp".
+- `src/launcher.h` / `launcher.cpp`: the home menu AND every sub-menu (carousel + tilt ring, `enterSub()` with any item list, optional value pill), 37 procedural icons (`drawIcon`, any size/animated), selection state. Pure UI: main.cpp starts the apps. `src/gfx.h` / `gfx.cpp`: clipped primitives (px/line/circle/disc/arc/rframe...) that are safe at any coordinate (U8g2 coordinates are unsigned 8-bit).
 - `src/main.cpp`: current firmware, hardware init, input handling, MPU, stats, pet animation/drawing, menus and mini-games, shared tilt helper, Tilt Maze, Fluid glue.
 - `src/fluid.h` / `src/fluid.cpp`: fixed-point particle fluid (no Arduino deps, also compiled on PC by `tools/fluidtest/`).
 - `tools/fluidtest/`: host harness (`fluidtest.cpp` + `render.py` PNG contact sheets) for tuning the fluid without hardware.
@@ -98,7 +102,8 @@ Salman confirms on the device.
 | I2C swap (OLED hw, MPU soft), touch on GPIO4 | DONE and TESTED. SUPERSEDED 2026-11-09: both now on one hardware bus GPIO 8/9 (host-checked only, not yet flashed) |
 | Expanded root/Tools/Games/Online menus | DONE (monolithic implementation) |
 | Temperature, Magic 8-ball, Dice | DONE and TESTED (Salman confirmed) |
-| Games: Snake, Flappy, procedural Tilt Maze, Dino Runner with crouch/obstacle variety | DONE in code, needs Salman hardware confirmation |
+| Games: Star Blaster, Sniper, Road Rush, Pinball (games.cpp), tilt Snake, Tilt Maze; Flappy / Dino / Catch Water removed | DONE in code + host-checked + PC-rendered + fuzzed (2026-11-12); needs Salman hardware confirmation |
+| Tools / Games / Settings / Online list in the launcher look (carousel or tilt ring, Back item, value pills) | DONE in code + PC-rendered; needs hardware confirmation |
 | Fluid main mode (root menu item 2), 3 presets | DONE in code + host-checked + host-rendered; needs Salman hardware confirmation (FPS, tilt feel) |
 | Tilt Maze rewrite (fixed 20 ms physics, shared tilt helper) | DONE in code + host-checked; needs hardware confirmation |
 | Pomodoro + Stopwatch | TODO (batch 3) |
@@ -315,3 +320,16 @@ Salman: on battery power only, entering Online mode reboots the device (fine on 
 - **Styles:** `setMenu` (NVS "menu", Settings row "Menu style"): 0 carousel (A/C, icons glide in from the right, brackets around the middle icon, label rises from below, dot row), 1 tilt ring (10 icons on an ellipse; tilt direction picks the nearest item with hysteresis; the highlighted one is inverted on a white disc; icons fly out of the middle on entry). Constants: ring `RING_RX/RY`, carousel `STEP`, tilt deadzone 0.13 in `launcher::input`.
 - **Background calibration** (`motionBackground()` in main.cpp, every mode): gyro bias from the first 50 calm samples (subtracted in `mpuRead`); `lvl` keeps a calm-gravity average; the first pose after boot is applied after 0.5 s calm via `tiltApplyPose()` (split out of `tiltBegin`); in Pet mode the pose is re-applied after `LEVEL_HOLD` (1.5 s) of stillness in a pose >~10 deg away; `levelForLauncher()` re-bases tilt on the pose just before the B press. The pet's eyes now follow `tilt.tx/ty` (calibrated) instead of the raw accelerometer axes. Games still do their own `tiltBegin()`.
 - Verify on the device: tilt directions (if left/right or up/down feel mirrored the axis derivation in `tiltApplyPose` is the place), ring crowding at the left/right sides, 20 s auto-return, and that the pet's gaze feels right after the first-boot calibration.
+
+
+### Games and menu revamp (2026-11-12; host-checked, PC-rendered, fuzzed; NOT flashed yet)
+**Menus.** `launcher::enterSub(items, count, selected, style, now, valueFn)` shows any list in the home-screen style. Tools, Games and Settings use it from main.cpp (`openSubMenu`, `menuPick` = the shared B logic: short B on release opens, hold 0.7 s goes up a level, 20 s idle returns to the pet); the Online list uses it from online.cpp (pill = Wi-Fi status). Every sub-menu ends with a Back item. `Settings` shows its value in the pill (`settingsValue`), Games shows `best N` (`gamesValue`). Menu style toggled in Settings restyles immediately (`launcher::restyle`).
+**Games** (`games.cpp`, fixed 20 ms step, every game restarts with A/C after game over and asks main.cpp for a tilt re-zero via `FLAG_REZERO`):
+- Star Blaster: tilt = ship position (absolute), A rapid fire, C smart bomb (1 to start, +1 every 15 kills, max 3), pickups: weapon (3 levels), life, bomb.
+- Sniper: tilt = scope speed (rate control, dead zone 0.05), A fires, bolt 0.9 s, C hold = 2x zoom + steady (3 s of breath, then a gasp). Targets live `2.8 - 0.06*kills` s (min 1.1), a missed one costs a life. Headshot 3, body 1. Blips on the scope ring point at targets that are out of view.
+- Road Rush: 35 s, checkpoint every 1000 m then every 1200 m (+20 s), cars cost 2 s and speed. `CK` (curve strength) and `HWP` (road width) at the top of `road::` are the look knobs.
+- Pinball: table on its side, gravity +x 220 px/s^2, 4 physics substeps per 20 ms, flippers are capsules with angular-velocity transfer, 3 bumpers (50 x combo points), 3 balls. Shake = nudge (3 nudges in a short time = TILT, flippers off until the ball drains).
+- Snake: now steers by tilt (|tilt| > 0.22) as well as A/C, and cannot U-turn into its neck. Tilt Maze unchanged. 8-ball and Dice moved to Tools and react to a shake.
+- Best scores: NVS keys `bestStar/bestSnip/bestRoad/bestPin`, written once when a new best is set.
+**PC tooling.** `tools/gamepreview/build.sh` then `/tmp/pocketpet-preview/preview OUTDIR` writes frame dumps (`python3 tools/fluidtest/render.py OUTDIR/x.bin x.png 3` makes a contact sheet) and prints the AI-player results; `preview OUTDIR fuzz` is the random-input torture test (build it with `-fsanitize=address,undefined`, see the command in the commit message of this change). It includes `games.cpp` directly, so tests can read game internals.
+**Check on the device.** (1) every menu in both styles, Back items, hold B; (2) each game: tilt direction feels right (if a game steers the wrong way the tilt helper's axes are the place), frame rate (Road Rush and Sniper redraw the most), difficulty; (3) Pinball: do the flippers feel strong enough, does shake-nudge trigger too easily (`0.55 g` threshold in `pin::step`); (4) Snake tilt dead zone; (5) Online list pill text while connecting.

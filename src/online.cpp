@@ -1,5 +1,6 @@
 #include "online.h"
 #include "config.h"
+#include "launcher.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
@@ -51,6 +52,12 @@ const char *const ITEM_NAMES[IT_COUNT] = {
   "Random fact", "Advice", "Moon phase", "Net status", "ISS tracker", "GitHub"
 };
 const int LIST_COUNT = IT_COUNT + 2;           // + "Sync now" + "Back"
+// The list is drawn by the launcher (same carousel / tilt-ring look as the home menu); the pill shows the Wi-Fi status.
+const launcher::Item LIST_ITEMS[LIST_COUNT] = {
+  {"Clock", launcher::ICON_CLOCK}, {"Weather", launcher::ICON_WEATHER}, {"Forecast", launcher::ICON_FORECAST}, {"Air quality", launcher::ICON_AQI},
+  {"Currency", launcher::ICON_CURRENCY}, {"World clocks", launcher::ICON_WORLD}, {"Random fact", launcher::ICON_FACT}, {"Advice", launcher::ICON_ADVICE},
+  {"Moon phase", launcher::ICON_MOON}, {"Net status", launcher::ICON_NET}, {"ISS tracker", launcher::ICON_ISS}, {"GitHub", launcher::ICON_GITHUB},
+  {"Sync now", launcher::ICON_SYNC}, {"Back", launcher::ICON_BACK}};
 
 enum Job : uint8_t { J_GEO, J_WEATHER, J_AQI, J_CUR, J_FACT, J_ADVICE, J_NET, J_ISS, J_CREW, J_GITHUB, J_COUNT };
 inline uint16_t jbit(int j) { return (uint16_t)(1u << j); }
@@ -82,7 +89,7 @@ enum WifiState : uint8_t { W_OFF, W_SCAN, W_CONNECTING, W_BACKOFF, W_UP, W_FAIL 
 
 // ---------------------------------------------------------------- state
 bool viewing = false;          // false = list, true = a screen
-int listIdx = 0;
+int listStyle = 0;               // launcher style (carousel / tilt ring) the list was opened with
 int cur = IT_CLOCK;
 uint32_t openedAt = 0;
 uint32_t hintUntil = 0;
@@ -1103,31 +1110,25 @@ void drawGithub(U8G2 &d, uint32_t now) {
   d.drawStr(0, 63, b);
 }
 
-void drawList(U8G2 &d) {
-  char tag[16];
+const char *listValue(int) {
+  static char tag[16];
   sessionTag(tag, sizeof(tag));
-  header(d, "ONLINE", tag);
-  d.setFont(u8g2_font_7x13_tf);
-  const int visible = 3;
-  int first = listIdx - visible + 1;
-  if (first < 0) first = 0;
-  if (first > LIST_COUNT - visible) first = LIST_COUNT - visible;
-  for (int row = 0; row < visible && first + row < LIST_COUNT; row++) {
-    int i = first + row;
-    int y = 29 + row * 13;
-    if (i == listIdx) d.drawStr(0, y, ">");
-    d.drawStr(14, y, i == IT_COUNT ? "Sync now" : i == IT_COUNT + 1 ? "Back" : ITEM_NAMES[i]);
-  }
-  d.setFont(u8g2_font_5x7_tf);
-  d.drawStr(0, 63, "A up   B ok   C down");
+  return tag;
 }
+
+void showList(uint32_t now, int selected) {
+  launcher::enterSub(LIST_ITEMS, LIST_COUNT, selected, listStyle, now, listValue);
+}
+
+void drawList(U8G2 &d, uint32_t now) { launcher::draw(d, now); }
 
 }  // namespace
 
 // ================================================================ public API
-void enter() {
+void enter(int style) {
   viewing = false;
-  listIdx = 0;
+  listStyle = style;
+  showList(millis(), 0);
   session = true;
   pending = 0;
   needTime = false;
@@ -1177,25 +1178,25 @@ const char *wifiStatusText() {
   }
 }
 
-bool input(bool a, bool b, bool c, uint32_t now) {
+bool input(bool a, bool b, bool c, uint32_t now, float tiltX, float tiltY, bool tiltOk) {
   if (!viewing) {
-    if (a) listIdx = (listIdx + LIST_COUNT - 1) % LIST_COUNT;
-    if (c) listIdx = (listIdx + 1) % LIST_COUNT;
-    if (b) {
-      if (listIdx == IT_COUNT + 1) return true;
-      if (listIdx == IT_COUNT) {
+    int pick = launcher::input(a, b, c, now, tiltX, tiltY, tiltOk);
+    if (pick >= 0) {
+      if (pick == IT_COUNT + 1) return true;
+      if (pick == IT_COUNT) {
         if (netConfigured) {
           queueSync(now, true);
           if (wst == W_OFF || wst == W_FAIL) beginSession(now);
         }
       } else {
-        openItem(listIdx, now);
+        openItem(pick, now);
       }
     }
     return false;
   }
   if (b) {                     // back to the list (a running sync keeps going)
     viewing = false;
+    showList(now, cur);
     return false;
   }
   if (c) openItem((cur + 1) % IT_COUNT, now);
@@ -1322,7 +1323,7 @@ void tick(uint32_t now) {
 void draw(U8G2 &d, uint32_t now) {
   drawnSince = true;
   if (!viewing) {
-    drawList(d);
+    drawList(d, now);
     return;
   }
   if (!ready(cur)) {

@@ -10,6 +10,7 @@
 #include "lyrics_visual.h"
 #include "living_oled.h"
 #include "launcher.h"
+#include "games.h"
 
 // OLED: 1.3" SH1106 and MPU6050 share one hardware I2C bus (Wire: SDA = GPIO 8, SCL = GPIO 9).
 U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
@@ -205,12 +206,15 @@ void applyScreen() {
   display.setFlipMode(setFlip ? 1 : 0);
 }
 
+const char *const BEST_KEYS[games::COUNT] = {"bestStar", "bestSnip", "bestRoad", "bestPin"};   // best scores of the new games
+
 void loadSettings() {
   setBright = constrain(prefs.getUChar("bright", 2), 0, 3);
   setSleep = constrain(prefs.getUChar("sleep", 0), 0, 3);
   setFlip = prefs.getUChar("flip", 0) ? 1 : 0;
   setLyric = constrain(prefs.getUChar("lyoff", 3), 0, LYRIC_STEP_COUNT - 1);
   setMenu = prefs.getUChar("menu", 0) ? 1 : 0;
+  for (int i = 0; i < games::COUNT; ++i) games::best[i] = prefs.getUInt(BEST_KEYS[i], 0);
   spotify::setLyricOffset(LYRIC_STEPS[setLyric]);
 }
 
@@ -220,6 +224,10 @@ void saveSettings() {
   prefs.putUChar("flip", setFlip);
   prefs.putUChar("lyoff", setLyric);
   prefs.putUChar("menu", setMenu);
+}
+
+void saveBest() {
+  for (int i = 0; i < games::COUNT; ++i) prefs.putUInt(BEST_KEYS[i], games::best[i]);
 }
 
 void resetPet() {
@@ -572,23 +580,26 @@ enum Mode {
   MODE_8BALL,
   MODE_DICE,
   MODE_SNAKE,
-  MODE_FLAPPY,
   MODE_TILT_MAZE,
-  MODE_DINO,
-  MODE_CATCH
+  MODE_GAME          // one of the new games in games.cpp (curGame says which)
 };
 
 Mode mode = MODE_PET;          // the pet is the home / idle screen; B opens the launcher
 
 const char *rootItems[] = {"Pet", "Fluid", "Stats", "Motion test", "Tools", "Games", "Online", "Spotify", "Lyrics visual", "Living OLED", "Settings"};
 const int ROOT_COUNT = 11;
-const char *toolsItems[] = {"Temperature"};
-const int TOOLS_COUNT = 1;
-const char *gamesItems[] = {"Magic 8-ball", "Dice", "Snake", "Flappy", "Tilt Maze", "Dino Runner", "Catch Water"};
+// Tools, Games and Settings reuse the launcher (carousel / tilt ring), so every menu looks like the home screen.
+const launcher::Item toolsMenu[] = {
+  {"Temperature", launcher::ICON_TOOLS}, {"Magic 8-ball", launcher::ICON_8BALL}, {"Dice", launcher::ICON_DICE}, {"Back", launcher::ICON_BACK}};
+const int TOOLS_COUNT = 4;
+const launcher::Item gamesMenu[] = {
+  {"Star Blaster", launcher::ICON_STAR}, {"Sniper", launcher::ICON_SNIPER}, {"Road Rush", launcher::ICON_ROAD}, {"Pinball", launcher::ICON_PINBALL},
+  {"Tilt Maze", launcher::ICON_MAZE}, {"Snake", launcher::ICON_SNAKE}, {"Back", launcher::ICON_BACK}};
 const int GAMES_COUNT = 7;
+games::Id curGame = games::STAR;
 
 int menuIndex = 0;
-int submenuIndex = 0;
+int submenuIndex = 0;          // item that was highlighted in Tools / Games / Settings (restored when coming back)
 
 const char *eightBallAnswers[] = {
   "Yes.", "No.", "Maybe.", "Definitely!",
@@ -597,6 +608,8 @@ const char *eightBallAnswers[] = {
 const int EIGHT_BALL_COUNT = 8;
 int eightBallIndex = 0;
 int diceValue = 1;
+bool shaken = false;           // set by the MPU code: the keychain was shaken (rolls the dice / asks the 8-ball)
+uint32_t shakeAt = 0;
 
 // ---------------- Mini-game state ----------------
 // All games are original, compact monochrome adaptations for the 128x64 OLED.
@@ -604,96 +617,6 @@ int diceValue = 1;
 uint32_t gameLastTick = 0;
 bool gameOver = false;
 uint32_t gameScore = 0;
-
-// Snake: 8px grid, 16x6 cells.
-int snakeX[96], snakeY[96];
-int snakeLength = 4, snakeDir = 0, foodX = 10, foodY = 3;
-uint32_t snakeLastStep = 0;
-
-void resetSnake() {
-  snakeLength = 4; snakeDir = 0; gameOver = false; gameScore = 0;
-  for (int i = 0; i < snakeLength; ++i) {
-    snakeX[i] = 6 - i; snakeY[i] = 3;
-  }
-  foodX = random(0, 16); foodY = random(0, 6);
-  snakeLastStep = millis();
-}
-
-void snakeTick(uint32_t now) {
-  if (gameOver || now - snakeLastStep < 170) return;
-  snakeLastStep = now;
-  int nx = snakeX[0], ny = snakeY[0];
-  if (snakeDir == 0) nx++;
-  else if (snakeDir == 1) ny++;
-  else if (snakeDir == 2) nx--;
-  else ny--;
-  if (nx < 0 || nx >= 16 || ny < 0 || ny >= 6) { gameOver = true; return; }
-  bool eating = nx == foodX && ny == foodY;
-  int limit = snakeLength - (eating ? 0 : 1);
-  for (int i = 0; i < limit; ++i) {
-    if (snakeX[i] == nx && snakeY[i] == ny) { gameOver = true; return; }
-  }
-  if (eating && snakeLength < 96) {
-    snakeLength++;
-    gameScore++;
-    foodX = random(0, 16); foodY = random(0, 6);
-  }
-  for (int i = snakeLength - 1; i > 0; --i) {
-    snakeX[i] = snakeX[i - 1]; snakeY[i] = snakeY[i - 1];
-  }
-  snakeX[0] = nx; snakeY[0] = ny;
-}
-
-void drawSnake() {
-  display.setFont(u8g2_font_5x7_tf);
-  char score[16]; snprintf(score, sizeof(score), "SNAKE %lu", (unsigned long)gameScore);
-  display.drawStr(0, 7, score);
-  display.drawHLine(0, 10, 128);
-  display.drawDisc(foodX * 8 + 4, 16 + foodY * 8 + 4, 3);
-  for (int i = 0; i < snakeLength; ++i) {
-    if (i == 0) display.drawBox(snakeX[i] * 8 + 1, 17 + snakeY[i] * 8, 6, 6);
-    else display.drawFrame(snakeX[i] * 8 + 1, 17 + snakeY[i] * 8, 6, 6);
-  }
-  if (gameOver) {
-    display.drawBox(24, 25, 80, 18);
-    display.setDrawColor(0); display.drawStr(34, 37, "GAME OVER"); display.setDrawColor(1);
-    display.setFont(u8g2_font_5x7_tf); display.drawStr(18, 61, "A/C restart  B back");
-  }
-}
-
-// Flappy: tap A or C to flap; pipes scroll automatically.
-float birdY = 34, birdV = 0;
-int pipeX = 112, pipeGapY = 34;
-uint32_t flappyLastTick = 0;
-
-void resetFlappy() {
-  birdY = 34; birdV = 0; pipeX = 112; pipeGapY = random(27, 48);
-  gameOver = false; gameScore = 0; flappyLastTick = millis();
-}
-void flappyTick(uint32_t now) {
-  if (gameOver || now - flappyLastTick < 35) return;
-  flappyLastTick = now;
-  birdV += 0.16f; birdY += birdV;
-  pipeX -= 2 + (int)(gameScore / 8);
-  if (pipeX < -8) { pipeX = 128; pipeGapY = random(25, 48); gameScore++; }
-  if (birdY < 13 || birdY > 57) gameOver = true;
-  if (pipeX < 34 && pipeX + 8 > 22 &&
-      (birdY < pipeGapY - 10 || birdY > pipeGapY + 10)) gameOver = true;
-}
-void drawFlappy() {
-  char score[16]; snprintf(score, sizeof(score), "FLAPPY %lu", (unsigned long)gameScore);
-  display.setFont(u8g2_font_5x7_tf); display.drawStr(0, 7, score);
-  display.drawHLine(0, 60, 128);
-  display.drawBox(pipeX, 12, 8, max(0, pipeGapY - 10 - 12));
-  display.drawBox(pipeX, pipeGapY + 10, 8, max(0, 60 - (pipeGapY + 10)));
-  display.drawDisc(27, (int)birdY, 4);
-  display.drawPixel(29, (int)birdY - 1);
-  if (gameOver) {
-    display.drawBox(24, 25, 80, 18);
-    display.setDrawColor(0); display.drawStr(34, 37, "GAME OVER"); display.setDrawColor(1);
-    display.drawStr(18, 61, "A/C restart  B back");
-  }
-}
 
 // ---------------- Tilt helper (shared by Tilt Maze and Fluid) ----------------
 // Hold the device the way you normally hold a phone (tilted toward your face). The pose you are in
@@ -1027,121 +950,76 @@ void drawMaze(uint32_t now) {
   }
 }
 
-// ---------------- Catch Water ----------------
-// A stream falls from a wandering tap. Tilt the device to slide the glass under it. After 20 s of water
-// the round ends and the share of drops that landed in the glass is shown as a percentage.
-const int CATCH_MAX = 40;
-const float CATCH_ROUND_S = 20.0f;
-const float CATCH_GLASS_W = 22.0f;     // outer width in px
-const int CATCH_GLASS_TOP = 44, CATCH_GLASS_BOT = 61;
-struct Drop { float x, y, vx, vy; bool alive; };
-Drop catchDrops[CATCH_MAX];
-float catchGlassX = 64, catchT = 0, catchSpawnAcc = 0, catchPhase = 0;
-uint16_t catchSpawned = 0, catchCaught = 0;
-bool catchStarted = false, catchDone = false;
-uint32_t catchLast = 0;
+// ---------------- Snake ----------------
+// 8 px grid, 16 x 6 cells. Tilt the keychain to steer (a firm tilt, measured from the pose you start in), or use
+// A = turn left, C = turn right. The pose is calibrated every time a round starts.
+int snakeX[96], snakeY[96];
+int snakeLength = 4, snakeDir = 0, snakeMoveDir = 0, foodX = 10, foodY = 3;
+uint32_t snakeLastStep = 0;
 
-float catchSpoutX() {   // wanders across the screen, never quite predictable
-  return 64.0f + 40.0f * sinf(catchT * 0.85f + catchPhase) + 14.0f * sinf(catchT * 2.1f + 1.3f * catchPhase);
-}
+void snakeTurn(int d) { if (d != (snakeMoveDir + 2) % 4) snakeDir = d; }   // never an instant U-turn into the neck
 
-void resetCatch() {
-  for (auto &d : catchDrops) d.alive = false;
-  catchGlassX = 64; catchT = 0; catchSpawnAcc = 0; catchSpawned = 0; catchCaught = 0;
-  catchStarted = false; catchDone = false;
-  catchPhase = random(0, 628) / 100.0f;
+void resetSnake() {
+  snakeLength = 4; snakeDir = snakeMoveDir = 0; gameOver = false; gameScore = 0;
+  for (int i = 0; i < snakeLength; ++i) {
+    snakeX[i] = 6 - i; snakeY[i] = 3;
+  }
+  foodX = random(0, 16); foodY = random(0, 6);
+  snakeLastStep = millis();
   tiltBegin();
 }
 
-void catchStep(float dt) {
-  // Glass follows the tilt: neutral = centre, about 0.45 tilt = screen edge. Smoothed so it glides.
-  float target = 64.0f + constrain(tilt.tx, -0.5f, 0.5f) / 0.5f * (64.0f - CATCH_GLASS_W / 2 - 1);
-  catchGlassX += (target - catchGlassX) * 0.35f;
-
-  if (catchT < CATCH_ROUND_S) {
-    catchT += dt;
-    catchSpawnAcc += dt * 14.0f;             // 14 drops per second
-    while (catchSpawnAcc >= 1.0f) {
-      catchSpawnAcc -= 1.0f;
-      for (auto &d : catchDrops) if (!d.alive) {
-        d.alive = true; d.x = catchSpoutX() + random(-10, 11) / 10.0f; d.y = 10;
-        d.vx = random(-30, 31) / 10.0f; d.vy = 20; ++catchSpawned;
-        break;
-      }
-    }
-  }
-  bool any = false;
-  float gl = catchGlassX - CATCH_GLASS_W / 2 + 2, gr = catchGlassX + CATCH_GLASS_W / 2 - 2;   // inside the walls
-  for (auto &d : catchDrops) {
-    if (!d.alive) continue;
-    float oy = d.y;
-    d.vy += 170.0f * dt;
-    d.x += d.vx * dt; d.y += d.vy * dt;
-    if (oy < CATCH_GLASS_TOP && d.y >= CATCH_GLASS_TOP && d.x >= gl && d.x <= gr) { d.alive = false; ++catchCaught; continue; }
-    if (d.y >= 63) { d.alive = false; continue; }
-    any = true;
-  }
-  if (catchT >= CATCH_ROUND_S && !any) catchDone = true;
-}
-
-void catchTick(uint32_t now) {
+void snakeTick(uint32_t now) {
   tiltUpdate();
-  if (tilt.calibrating || catchDone || !mpuOk) { catchLast = now; return; }
-  if (!catchStarted) { catchStarted = true; catchLast = now; }
-  int steps = 0;
-  while (now - catchLast >= 20 && steps < 3) { catchStep(0.02f); catchLast += 20; ++steps; }
-  if (now - catchLast > 60) catchLast = now;
+  if (tilt.calibrating) { snakeLastStep = now; return; }
+  if (!gameOver && mpuOk) {
+    float ax = fabsf(tilt.tx), ay = fabsf(tilt.ty);
+    if (ax > 0.22f || ay > 0.22f) snakeTurn(ax > ay ? (tilt.tx > 0 ? 0 : 2) : (tilt.ty > 0 ? 1 : 3));
+  }
+  if (gameOver || now - snakeLastStep < 170) return;
+  snakeLastStep = now;
+  snakeMoveDir = snakeDir;
+  int nx = snakeX[0], ny = snakeY[0];
+  if (snakeDir == 0) nx++;
+  else if (snakeDir == 1) ny++;
+  else if (snakeDir == 2) nx--;
+  else ny--;
+  if (nx < 0 || nx >= 16 || ny < 0 || ny >= 6) { gameOver = true; return; }
+  bool eating = nx == foodX && ny == foodY;
+  int limit = snakeLength - (eating ? 0 : 1);
+  for (int i = 0; i < limit; ++i) {
+    if (snakeX[i] == nx && snakeY[i] == ny) { gameOver = true; return; }
+  }
+  if (eating && snakeLength < 96) {
+    snakeLength++;
+    gameScore++;
+    foodX = random(0, 16); foodY = random(0, 6);
+  }
+  for (int i = snakeLength - 1; i > 0; --i) {
+    snakeX[i] = snakeX[i - 1]; snakeY[i] = snakeY[i - 1];
+  }
+  snakeX[0] = nx; snakeY[0] = ny;
 }
 
-void drawCatch(uint32_t now) {
+void drawSnake() {
   display.setFont(u8g2_font_5x7_tf);
-  if (!mpuOk) {
-    display.drawStr(0, 7, "CATCH WATER");
-    drawBanner("MPU6050 not found", 36);
-    return;
+  char score[16]; snprintf(score, sizeof(score), "SNAKE %lu", (unsigned long)gameScore);
+  display.drawStr(0, 7, score);
+  display.drawHLine(0, 10, 128);
+  display.drawDisc(foodX * 8 + 4, 16 + foodY * 8 + 4, 3);
+  for (int i = 0; i < snakeLength; ++i) {
+    if (i == 0) display.drawBox(snakeX[i] * 8 + 1, 17 + snakeY[i] * 8, 6, 6);
+    else display.drawFrame(snakeX[i] * 8 + 1, 17 + snakeY[i] * 8, 6, 6);
   }
-  if (catchDone) {
-    int pct = catchSpawned ? (int)((catchCaught * 100UL + catchSpawned / 2) / catchSpawned) : 0;
-    char big[8]; snprintf(big, sizeof(big), "%d%%", pct);
-    display.setFont(u8g2_font_logisoso28_tn);
-    int w = display.getStrWidth(big);
-    display.drawStr((128 - w) / 2, 38, big);
-    display.setFont(u8g2_font_5x7_tf);
-    char line[28]; snprintf(line, sizeof(line), "caught %u of %u drops", catchCaught, catchSpawned);
-    display.drawStr((128 - display.getStrWidth(line)) / 2, 51, line);
-    display.drawStr(0, 63, "A/C again   B back");
-    return;
+  if (gameOver) {
+    display.drawBox(24, 25, 80, 18);
+    display.setDrawColor(0); display.drawStr(34, 37, "GAME OVER"); display.setDrawColor(1);
+    display.setFont(u8g2_font_5x7_tf); display.drawStr(18, 61, "A/C restart  B back");
   }
-  char head[24];
-  snprintf(head, sizeof(head), "CATCH  %ds", (int)ceilf(fmaxf(0.0f, CATCH_ROUND_S - catchT)));
-  display.drawStr(0, 7, head);
-
-  // Tap above the stream.
-  int sx = (int)catchSpoutX();
-  if (catchStarted && catchT < CATCH_ROUND_S) {
-    display.drawBox(sx - 3, 9, 7, 3);
-    display.drawBox(sx - 1, 12, 3, 2);
-  }
-  for (auto &d : catchDrops) if (d.alive) display.drawBox((int)d.x, (int)d.y, 1, 2);
-
-  // Glass: slightly tapered, water level rises with the share of caught drops, top edge shears with tilt.
-  int gx = (int)catchGlassX, hw = (int)(CATCH_GLASS_W / 2);
-  int lvl = catchSpawned ? (int)((CATCH_GLASS_BOT - CATCH_GLASS_TOP - 2) * catchCaught / (14.0f * CATCH_ROUND_S)) : 0;
-  lvl = constrain(lvl, 0, CATCH_GLASS_BOT - CATCH_GLASS_TOP - 2);
-  display.drawLine(gx - hw, CATCH_GLASS_TOP, gx - hw + 3, CATCH_GLASS_BOT);
-  display.drawLine(gx + hw, CATCH_GLASS_TOP, gx + hw - 3, CATCH_GLASS_BOT);
-  display.drawHLine(gx - hw + 3, CATCH_GLASS_BOT, 2 * hw - 5);
-  for (int i = 0; i < lvl; ++i) {
-    int y = CATCH_GLASS_BOT - 1 - i;
-    float f = (float)(CATCH_GLASS_BOT - y) / (CATCH_GLASS_BOT - CATCH_GLASS_TOP);
-    int inset = (int)(3 * (1.0f - f)) + 1;
-    display.drawHLine(gx - hw + inset, y, 2 * hw - 2 * inset + 1);
-  }
-
   if (tilt.calibrating) {
-    drawBanner("Hold like a phone...", 30);
-    display.drawFrame(34, 35, 60, 5);
-    display.drawBox(35, 36, (int)(58.0f * tilt.samples / 25.0f), 3);
+    drawBanner("Hold like a phone...", 38);
+    display.drawFrame(34, 43, 60, 5);
+    display.drawBox(35, 44, (int)(58.0f * tilt.samples / 25.0f), 3);
   }
 }
 
@@ -1173,91 +1051,10 @@ void drawFluid(uint32_t now) {
   }
 }
 
-// Dino Runner: jump, crouch, mixed cactus clusters and low-flying birds.
-float dinoY = 49, dinoV = 0;
-int cactusX = 120, cactusH = 12, dinoObstacleType = 0;
-bool dinoCrouching = false;
-uint32_t dinoLastTick = 0;
-void resetDino() {
-  dinoY = 49; dinoV = 0; cactusX = 120; cactusH = random(9, 17);
-  dinoObstacleType = random(0, 3); dinoCrouching = false;
-  gameOver = false; gameScore = 0; dinoLastTick = millis();
-}
-void dinoTick(uint32_t now) {
-  if (gameOver || now - dinoLastTick < 32) return;
-  dinoLastTick = now; dinoV += 0.24f; dinoY += dinoV;
-  if (dinoY > 49) { dinoY = 49; dinoV = 0; }
-  int speed = 2 + min(4, (int)(gameScore / 8));
-  cactusX -= speed;
-  if (cactusX < -14) { cactusX = 128 + random(14, 38); dinoObstacleType = random(0, 3); cactusH = random(9, 18); gameScore++; }
-  if (cactusX < 27 && cactusX > 5) {
-    if (dinoObstacleType == 2) { if (!dinoCrouching && dinoY > 43) gameOver = true; }
-    else if (dinoY > 49 - cactusH + 5) gameOver = true;
-    if (dinoObstacleType == 1 && cactusX < 22 && cactusX > 8 && dinoY > 49 - cactusH + 5) gameOver = true;
-  }
-}
-void drawDino() {
-  char score[20]; snprintf(score, sizeof(score), "DINO %lu %s", (unsigned long)gameScore, dinoCrouching ? "DUCK" : "");
-  display.setFont(u8g2_font_5x7_tf); display.drawStr(0, 7, score); display.drawHLine(0, 55, 128);
-  int y = (int)dinoY;
-  if (dinoCrouching && y >= 48) {
-    display.drawBox(10, 45, 13, 6); display.drawBox(19, 42, 6, 5); display.drawPixel(23, 43);
-  } else {
-    display.drawBox(12, y - 10, 10, 8); display.drawBox(18, y - 14, 5, 6); display.drawPixel(21, y - 12);
-    display.drawBox(9, y - 5, 5, 3); int leg = (millis()/100)%2 ? 1 : -1;
-    display.drawLine(15, y-2, 14+leg, y+1); display.drawLine(20, y-2, 21-leg, y+1);
-  }
-  if (dinoObstacleType == 2) {
-    int wing = (millis()/100)%2 ? 2 : -2;
-    display.drawLine(cactusX-4, 32, cactusX+7, 32); display.drawLine(cactusX, 32, cactusX+wing, 28);
-    display.drawLine(cactusX+2, 32, cactusX+2-wing, 36); display.drawPixel(cactusX+8, 31);
-  } else {
-    display.drawBox(cactusX, 55-cactusH, 4, cactusH); display.drawBox(cactusX-3, 47-cactusH/2, 3, 4);
-    display.drawBox(cactusX+3, 43-cactusH/2, 3, 4);
-    if (dinoObstacleType == 1) { display.drawBox(cactusX+6, 55-cactusH+3, 4, cactusH-3); display.drawBox(cactusX+4, 45-cactusH/2, 3, 4); }
-  }
-  if (gameOver) { display.drawBox(27, 24, 74, 20); display.setDrawColor(0); display.drawStr(37, 36, "GAME OVER"); display.setDrawColor(1); display.setFont(u8g2_font_5x7_tf); display.drawStr(8, 63, "A jump  C duck  B back"); }
-}
 void gameTick(uint32_t now) {
   if (mode == MODE_SNAKE) snakeTick(now);
-  else if (mode == MODE_FLAPPY) flappyTick(now);
   else if (mode == MODE_TILT_MAZE) mazeTick(now);
-  else if (mode == MODE_CATCH) catchTick(now);
   else if (mode == MODE_FLUID) tiltUpdate();
-  else if (mode == MODE_DINO) dinoTick(now);
-}
-
-void drawMenuList(const char *title, const char *items[], int count, int selected) {
-  display.setFont(u8g2_font_7x13B_tf);
-  display.drawStr(0, 12, title);
-  display.drawHLine(0, 15, 128);
-
-  display.setFont(u8g2_font_7x13_tf);
-
-  // Four rows fit comfortably while leaving room for the controls hint.
-  const int visible = 3;
-  int first = selected - visible + 1;
-  if (first < 0) first = 0;
-  if (first > count - visible) first = max(0, count - visible);
-
-  for (int row = 0; row < visible && first + row < count; row++) {
-    int i = first + row;
-    int y = 29 + row * 13;
-    if (i == selected) display.drawStr(0, y, ">");
-    display.drawStr(14, y, items[i]);
-  }
-
-  display.setFont(u8g2_font_5x7_tf);
-  display.drawStr(0, 63, "A up   B ok   C down");
-}
-
-
-void drawToolsMenu() {
-  drawMenuList("TOOLS", toolsItems, TOOLS_COUNT, submenuIndex);
-}
-
-void drawGamesMenu() {
-  drawMenuList("GAMES", gamesItems, GAMES_COUNT, submenuIndex);
 }
 
 void drawBar(int y, const char *label, float value) {
@@ -1300,35 +1097,30 @@ void drawStats() {
   display.drawStr(128 - display.getStrWidth(rr), 60, rr);
 }
 
-int settingsRow = 0;
 bool resetArmed = false;
 uint32_t settingsMsgUntil = 0;
-const int SETTINGS_ROWS = 7;   // brightness, auto-off, flip, menu style, lyrics sync, reset pet, back
+const int SETTINGS_ROWS = 7;
+const launcher::Item settingsMenu[SETTINGS_ROWS] = {
+  {"Brightness", launcher::ICON_BRIGHT}, {"Screen off", launcher::ICON_SCREEN_OFF}, {"Flip screen", launcher::ICON_FLIP},
+  {"Menu style", launcher::ICON_STYLE}, {"Lyrics sync", launcher::ICON_SYNC}, {"Reset pet", launcher::ICON_RESET}, {"Back", launcher::ICON_BACK}};
 
-void drawSettings(uint32_t now) {
-  display.setFont(u8g2_font_7x13B_tf);
-  display.drawStr(0, 12, "SETTINGS");
-  display.drawHLine(0, 15, 128);
-  display.setFont(u8g2_font_6x10_tf);
-
-  const char *labels[SETTINGS_ROWS] = {"Brightness", "Screen off", "Flip screen", "Menu style", "Lyrics sync", "Reset pet", "Back"};
-  char lyricVal[12];
-  snprintf(lyricVal, sizeof(lyricVal), LYRIC_STEPS[setLyric] > 0 ? "+%dms" : "%dms", LYRIC_STEPS[setLyric]);
-  const char *vals[SETTINGS_ROWS] = {BRIGHT_NAMES[setBright], SLEEP_NAMES[setSleep], setFlip ? "On" : "Off", setMenu ? "Tilt ring" : "Carousel", lyricVal,
-                                     resetArmed ? "Sure? B=yes" : "", ""};
-  const int visible = 4;
-  int first = settingsRow - visible + 1;
-  if (first < 0) first = 0;
-  for (int row = 0; row < visible && first + row < SETTINGS_ROWS; ++row) {
-    int i = first + row, y = 27 + row * 11;
-    if (i == settingsRow) display.drawStr(0, y, ">");
-    display.drawStr(8, y, labels[i]);
-    int w = display.getStrWidth(vals[i]);
-    display.drawStr(128 - w, y, vals[i]);
+const char *settingsValue(int i) {                  // the little pill under the name
+  static char buf[12];
+  switch (i) {
+    case 0: return BRIGHT_NAMES[setBright];
+    case 1: return SLEEP_NAMES[setSleep];
+    case 2: return setFlip ? "On" : "Off";
+    case 3: return setMenu ? "Tilt ring" : "Carousel";
+    case 4: snprintf(buf, sizeof(buf), LYRIC_STEPS[setLyric] > 0 ? "+%dms" : "%dms", LYRIC_STEPS[setLyric]); return buf;
+    case 5: return resetArmed ? "Sure? B" : "";
+    default: return "";
   }
-  display.setFont(u8g2_font_5x7_tf);
-  display.drawStr(0, 63, "A up  B change  C down");
-  if (now < settingsMsgUntil) drawBanner("Pet reset", 40);
+}
+
+const char *gamesValue(int i) {                     // best score under the game name
+  static char buf[16];
+  if (i < games::COUNT && games::best[i] > 0) { snprintf(buf, sizeof(buf), "best %lu", (unsigned long)games::best[i]); return buf; }
+  return "";
 }
 
 void drawMotion() {
@@ -1381,7 +1173,7 @@ void draw8Ball() {
   display.drawStr(8, 35, eightBallAnswers[eightBallIndex]);
 
   display.setFont(u8g2_font_5x7_tf);
-  display.drawStr(0, 63, "A/C ask again  B back");
+  display.drawStr(0, 63, "shake or A/C  B back");
 }
 
 void drawDice() {
@@ -1409,7 +1201,35 @@ void drawDice() {
   }
 
   display.setFont(u8g2_font_5x7_tf);
-  display.drawStr(0, 63, "A/C roll  B back");
+  display.drawStr(0, 63, "shake or A/C  B back");
+}
+
+// Shared B handling for the home launcher and its sub-menus (Tools, Games, Settings): a short press (on release) opens
+// the highlighted item, holding B for 0.7 s goes back. Returns the picked index or -1; longB is set when the hold fired.
+bool menuHeld = false, menuLong = false;
+int menuPick(uint32_t now, bool a, bool b, bool c, bool &longB) {
+  bool bShort = false;
+  longB = false;
+  if (b) { menuHeld = true; menuLong = false; }
+  if (menuHeld) {
+    if (btnB.stable == LOW) {
+      if (!menuLong && now - btnB.changedAt >= 700) { menuLong = true; longB = true; }
+    } else {
+      if (!menuLong) bShort = true;
+      menuHeld = false;
+    }
+  }
+  if (longB) return -1;
+  bool tiltOk = mpuOk && !tilt.calibrating && tilt.autoAxes;
+  return launcher::input(a, bShort, c, now, tilt.tx, tilt.ty, tiltOk);
+}
+
+void openSubMenu(Mode m) {
+  levelForLauncher();                          // tilt (ring style) is measured from the pose the device was just in
+  const launcher::Item *items = m == MODE_TOOLS ? toolsMenu : (m == MODE_GAMES ? gamesMenu : settingsMenu);
+  int n = m == MODE_TOOLS ? TOOLS_COUNT : (m == MODE_GAMES ? GAMES_COUNT : SETTINGS_ROWS);
+  const char *(*val)(int) = m == MODE_SETTINGS ? settingsValue : (m == MODE_GAMES ? gamesValue : nullptr);
+  launcher::enterSub(items, n, constrain(submenuIndex, 0, n - 1), setMenu, millis(), val);
 }
 
 void enterMode(Mode m) {
@@ -1430,19 +1250,20 @@ void enterMode(Mode m) {
     levelForLauncher();
     launcher::enter(constrain(menuIndex - 1, 0, launcher::APP_COUNT - 1), setMenu, millis());
   }
-  if (m == MODE_ONLINE) online::enter();
+  if (m == MODE_TOOLS || m == MODE_GAMES || m == MODE_SETTINGS) {
+    if (m == MODE_SETTINGS) resetArmed = false;
+    openSubMenu(m);
+  }
+  if (m == MODE_ONLINE) { levelForLauncher(); online::enter(setMenu); }
   if (m == MODE_SPOTIFY) spotify::enter();
   if (m == MODE_LYRICS_VISUAL) lyrics_visual::enter();
   if (m == MODE_LIVING_OLED) living_oled::enter();
-  if (m == MODE_SETTINGS) { settingsRow = 0; resetArmed = false; }
   if (m == MODE_8BALL) eightBallIndex = random(EIGHT_BALL_COUNT);
   if (m == MODE_DICE) diceValue = random(1, 7);
   if (m == MODE_SNAKE) resetSnake();
-  if (m == MODE_FLAPPY) resetFlappy();
   if (m == MODE_TILT_MAZE) resetMaze();
-  if (m == MODE_CATCH) resetCatch();
   if (m == MODE_FLUID) enterFluid();
-  if (m == MODE_DINO) resetDino();
+  if (m == MODE_GAME) { games::begin(curGame); tiltBegin(); }
 }
 
 // ---------------- Arduino ----------------
@@ -1539,7 +1360,7 @@ void loop() {
       lastInteraction = lastActivity = now;
     }
   } else if (setSleep && oledUp && SLEEP_MS[setSleep] && now - lastActivity > SLEEP_MS[setSleep] &&
-             mode != MODE_FLUID && mode != MODE_TILT_MAZE && mode != MODE_CATCH && mode != MODE_SPOTIFY && mode != MODE_LYRICS_VISUAL && mode != MODE_LIVING_OLED) {
+             mode != MODE_FLUID && mode != MODE_TILT_MAZE && mode != MODE_GAME && mode != MODE_SNAKE && mode != MODE_SPOTIFY && mode != MODE_LYRICS_VISUAL && mode != MODE_LIVING_OLED) {
     screenOff = true;
     display.setPowerSave(1);
   }
@@ -1587,6 +1408,7 @@ void loop() {
       float spin = fabsf(motion.gx) + fabsf(motion.gy) + fabsf(motion.gz);
 
       if (dev > 0.12f || spin > 45.0f) lastActivity = now;
+      if ((mode == MODE_8BALL || mode == MODE_DICE) && (dev > 0.55f || spin > 260.0f) && now - shakeAt > 700) { shakeAt = now; shaken = true; }
 
       if (mode == MODE_PET) {
         if (spin > 400.0f) {
@@ -1633,6 +1455,7 @@ void loop() {
     lastTick = now;
     statsTick(now);
     saveStats(false);
+    if (games::takeBestDirty()) saveBest();
   }
 
   // Serial diagnostics.
@@ -1661,85 +1484,62 @@ void loop() {
   }
 
   // Input handling.
-  if (mode == MODE_MENU && now - launcher::lastInputAt() > 20000) {     // nobody touches the launcher: back to the pet
-    menuIndex = 0;
+  if ((mode == MODE_MENU || mode == MODE_TOOLS || mode == MODE_GAMES || mode == MODE_SETTINGS) && now - launcher::lastInputAt() > 20000) {
+    menuIndex = 0;                                                     // nobody touches the menu: back to the pet
     enterMode(MODE_PET);
   }
   if (mode == MODE_MENU) {
-    // B: short press (on release) opens the highlighted app, hold 0.7 s goes back to the pet.
-    static bool menuHeld = false, menuLong = false;
-    bool bShort = false;
-    if (b) { menuHeld = true; menuLong = false; }
-    if (menuHeld) {
-      if (btnB.stable == LOW) {
-        if (!menuLong && now - btnB.changedAt >= 700) { menuLong = true; menuIndex = 0; enterMode(MODE_PET); }
-      } else {
-        if (!menuLong) bShort = true;
-        menuHeld = false;
-      }
+    bool longB;
+    int app = menuPick(now, a, b, c, longB);                           // short B opens the app, hold 0.7 s = back to the pet
+    if (longB) {
+      menuIndex = 0;
+      enterMode(MODE_PET);
+    } else if (app >= 0) {
+      menuIndex = app + 1;                                             // rootItems index: 1 = Fluid ... 10 = Settings
+      submenuIndex = 0;
+      if (menuIndex == 1) enterMode(MODE_FLUID);
+      else if (menuIndex == 2) enterMode(MODE_STATS);
+      else if (menuIndex == 3) enterMode(MODE_MOTION);
+      else if (menuIndex == 4) enterMode(MODE_TOOLS);
+      else if (menuIndex == 5) enterMode(MODE_GAMES);
+      else if (menuIndex == 6) enterMode(MODE_ONLINE);
+      else if (menuIndex == 7) enterMode(MODE_SPOTIFY);
+      else if (menuIndex == 8) enterMode(MODE_LYRICS_VISUAL);
+      else if (menuIndex == 9) enterMode(MODE_LIVING_OLED);
+      else enterMode(MODE_SETTINGS);
     }
-    if (mode == MODE_MENU) {
-      bool tiltOk = mpuOk && !tilt.calibrating && tilt.autoAxes;
-      int app = launcher::input(a, bShort, c, now, tilt.tx, tilt.ty, tiltOk);
-      if (app >= 0) {
-        menuIndex = app + 1;                                           // rootItems index: 1 = Fluid ... 10 = Settings
-        if (menuIndex == 1) enterMode(MODE_FLUID);
-        else if (menuIndex == 2) enterMode(MODE_STATS);
-        else if (menuIndex == 3) enterMode(MODE_MOTION);
-        else if (menuIndex == 4) {
-          submenuIndex = 0;
-          enterMode(MODE_TOOLS);
-        } else if (menuIndex == 5) {
-          submenuIndex = 0;
-          enterMode(MODE_GAMES);
-        } else if (menuIndex == 6) {
-          submenuIndex = 0;
-          enterMode(MODE_ONLINE);
-        } else if (menuIndex == 7) {
-          enterMode(MODE_SPOTIFY);
-        } else if (menuIndex == 8) {
-          enterMode(MODE_LYRICS_VISUAL);
-        } else if (menuIndex == 9) {
-          enterMode(MODE_LIVING_OLED);
-        } else {
-          enterMode(MODE_SETTINGS);
-        }
-      }
-    }
-  } else if (mode == MODE_TOOLS) {
-    if (a) submenuIndex = (submenuIndex + TOOLS_COUNT - 1) % TOOLS_COUNT;
-    if (c) submenuIndex = (submenuIndex + 1) % TOOLS_COUNT;
-    if (b) {
-      if (submenuIndex == 0) enterMode(MODE_TEMP);
-    }
-  } else if (mode == MODE_GAMES) {
-    if (a) submenuIndex = (submenuIndex + GAMES_COUNT - 1) % GAMES_COUNT;
-    if (c) submenuIndex = (submenuIndex + 1) % GAMES_COUNT;
-    if (b) {
-      if (submenuIndex == 0) enterMode(MODE_8BALL);
-      else if (submenuIndex == 1) enterMode(MODE_DICE);
-      else if (submenuIndex == 2) enterMode(MODE_SNAKE);
-      else if (submenuIndex == 3) enterMode(MODE_FLAPPY);
-      else if (submenuIndex == 4) enterMode(MODE_TILT_MAZE);
-      else if (submenuIndex == 5) enterMode(MODE_DINO);
-      else enterMode(MODE_CATCH);
-    }
-  } else if (mode == MODE_SETTINGS) {
-    if (a) { settingsRow = (settingsRow + SETTINGS_ROWS - 1) % SETTINGS_ROWS; resetArmed = false; }
-    if (c) { settingsRow = (settingsRow + 1) % SETTINGS_ROWS; resetArmed = false; }
-    if (b) {
-      if (settingsRow == 0) { setBright = (setBright + 1) % 4; applyScreen(); saveSettings(); }
-      else if (settingsRow == 1) { setSleep = (setSleep + 1) % 4; saveSettings(); }
-      else if (settingsRow == 2) { setFlip ^= 1; applyScreen(); saveSettings(); }
-      else if (settingsRow == 3) { setMenu ^= 1; saveSettings(); }
-      else if (settingsRow == 4) { setLyric = (setLyric + 1) % LYRIC_STEP_COUNT; spotify::setLyricOffset(LYRIC_STEPS[setLyric]); saveSettings(); }
-      else if (settingsRow == 5) {
+  } else if (mode == MODE_TOOLS || mode == MODE_GAMES || mode == MODE_SETTINGS) {
+    bool longB;
+    int pick = menuPick(now, a, b, c, longB);                          // same controls as the home menu; hold B = up one level
+    if (mode == MODE_SETTINGS && launcher::selected() != 5) resetArmed = false;
+    if (longB) {
+      enterMode(MODE_MENU);
+    } else if (pick >= 0 && mode == MODE_TOOLS) {
+      submenuIndex = pick;
+      if (pick == 0) enterMode(MODE_TEMP);
+      else if (pick == 1) enterMode(MODE_8BALL);
+      else if (pick == 2) enterMode(MODE_DICE);
+      else enterMode(MODE_MENU);
+    } else if (pick >= 0 && mode == MODE_GAMES) {
+      submenuIndex = pick;
+      if (pick < games::COUNT) { curGame = (games::Id)pick; enterMode(MODE_GAME); }
+      else if (pick == 4) enterMode(MODE_TILT_MAZE);
+      else if (pick == 5) enterMode(MODE_SNAKE);
+      else enterMode(MODE_MENU);
+    } else if (pick >= 0 && mode == MODE_SETTINGS) {
+      if (pick == 0) { setBright = (setBright + 1) % 4; applyScreen(); saveSettings(); }
+      else if (pick == 1) { setSleep = (setSleep + 1) % 4; saveSettings(); }
+      else if (pick == 2) { setFlip ^= 1; applyScreen(); saveSettings(); }
+      else if (pick == 3) { setMenu ^= 1; launcher::restyle(setMenu, now); saveSettings(); }
+      else if (pick == 4) { setLyric = (setLyric + 1) % LYRIC_STEP_COUNT; spotify::setLyricOffset(LYRIC_STEPS[setLyric]); saveSettings(); }
+      else if (pick == 5) {
         if (resetArmed) { resetPet(); resetArmed = false; settingsMsgUntil = millis() + 1500; }
         else resetArmed = true;
       } else enterMode(MODE_MENU);
     }
   } else if (mode == MODE_ONLINE) {
-    if (online::input(a, b, c, now)) enterMode(MODE_MENU);
+    bool tiltOk = mpuOk && !tilt.calibrating && tilt.autoAxes;
+    if (online::input(a, b, c, now, tilt.tx, tilt.ty, tiltOk)) enterMode(MODE_MENU);
   } else if (mode == MODE_SPOTIFY || mode == MODE_LYRICS_VISUAL) {
     // B: short press = play/pause (on release), hold 0.7 s = back to the menu.
     static bool spHeld = false, spLong = false;
@@ -1781,31 +1581,35 @@ void loop() {
       trigger(OV_SURPRISED, 800);
       addHappy(1);
     }
+  } else if (mode == MODE_TEMP) {
+    if (b) enterMode(MODE_TOOLS);
   } else if (mode == MODE_8BALL) {
-    if (a || c) eightBallIndex = random(EIGHT_BALL_COUNT);
-    if (b) enterMode(MODE_GAMES);
+    if (a || c || shaken) eightBallIndex = random(EIGHT_BALL_COUNT);
+    if (b) enterMode(MODE_TOOLS);
   } else if (mode == MODE_DICE) {
-    if (a || c) diceValue = random(1, 7);
-    if (b) enterMode(MODE_GAMES);
+    if (a || c || shaken) diceValue = random(1, 7);
+    if (b) enterMode(MODE_TOOLS);
   } else if (mode == MODE_SNAKE) {
-    if (a) snakeDir = (snakeDir + 3) % 4;
-    if (c) snakeDir = (snakeDir + 1) % 4;
+    if (a) snakeTurn((snakeDir + 3) % 4);
+    if (c) snakeTurn((snakeDir + 1) % 4);
     if (b) enterMode(MODE_GAMES);
     if (gameOver && (a || c)) resetSnake();
-  } else if (mode == MODE_FLAPPY) {
-    if (b) enterMode(MODE_GAMES);
-    else if (a || c) {
-      if (gameOver) resetFlappy();
-      else birdV = -2.4f;
-    }
-  } else if (mode == MODE_CATCH) {
-    if (b) enterMode(MODE_GAMES);
-    else if (catchDone && (a || c)) resetCatch();
-    else if (a) tiltBegin();
   } else if (mode == MODE_TILT_MAZE) {
     if (b) enterMode(MODE_GAMES);
     else if (c || (a && mazeWon)) resetMaze();          // new maze
     else if (a) tiltBegin();                             // re-zero: hold the way you like and press A
+  } else if (mode == MODE_GAME) {
+    if (b) enterMode(MODE_GAMES);
+    else {
+      games::Input gi = {};
+      gi.a = a; gi.c = c;
+      gi.aHeld = btnA.stable == LOW; gi.cHeld = btnC.stable == LOW;
+      gi.tiltOk = mpuOk;
+      gi.calibrating = tilt.calibrating; gi.calib = tilt.samples / 25.0f;
+      gi.tx = tilt.tx; gi.ty = tilt.ty;
+      gi.shx = tilt.rgx - tilt.sgx; gi.shy = tilt.rgy - tilt.sgy;   // sudden push = a shake
+      if (games::update(now, gi) & games::FLAG_REZERO) tiltBegin();  // a new round: calibrate the pose again
+    }
   } else if (mode == MODE_FLUID) {
     if (b) enterMode(MODE_MENU);
     else if (a) tiltBegin();                             // re-zero the "level" pose
@@ -1814,16 +1618,10 @@ void loop() {
       fluid::setPreset(fluidPreset);
       fluidLabelUntil = millis() + 1500;
     }
-  } else if (mode == MODE_DINO) {
-    if (b) enterMode(MODE_GAMES);
-    else if (gameOver && (a || c)) resetDino();
-    else {
-      if (a && !dinoCrouching && dinoY >= 48.5f) dinoV = -3.7f;
-      if (c && dinoY >= 48.5f) dinoCrouching = !dinoCrouching;
-    }
   } else if (b) {
     enterMode(MODE_MENU);
   }
+  shaken = false;
 
   // Draw.
   if (oledUp && !screenOff && now - lastFrame >= FRAME_MS) {
@@ -1840,12 +1638,13 @@ void loop() {
       drawStats();
     } else if (mode == MODE_MOTION) {
       drawMotion();
-    } else if (mode == MODE_TOOLS) {
-      drawToolsMenu();
-    } else if (mode == MODE_GAMES) {
-      drawGamesMenu();
+    } else if (mode == MODE_TOOLS || mode == MODE_GAMES) {
+      launcher::draw(display, now);
     } else if (mode == MODE_SETTINGS) {
-      drawSettings(now);
+      launcher::draw(display, now);
+      if (now < settingsMsgUntil) drawBanner("Pet reset", 40);
+    } else if (mode == MODE_GAME) {
+      games::draw(display, now);
     } else if (mode == MODE_ONLINE) {
       online::draw(display, now);
     } else if (mode == MODE_SPOTIFY) {
@@ -1862,16 +1661,10 @@ void loop() {
       drawDice();
     } else if (mode == MODE_SNAKE) {
       drawSnake();
-    } else if (mode == MODE_FLAPPY) {
-      drawFlappy();
     } else if (mode == MODE_FLUID) {
       drawFluid(now);
-    } else if (mode == MODE_CATCH) {
-      drawCatch(now);
     } else if (mode == MODE_TILT_MAZE) {
       drawMaze(now);
-    } else {
-      drawDino();
     }
 
     display.sendBuffer();
