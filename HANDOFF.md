@@ -57,6 +57,7 @@ GPIO 8/9 are strapping pins, GPIO 0-5 are the only deep-sleep wake pins on the C
 - `src/config.h`: pins, addresses, timing and tuning macros.
 - `src/online.h` / `src/online.cpp`: the whole Online mode. Own state (Wi-Fi state machine, per-request cache, 12 screens). main.cpp only calls `online::enter/leave/tick/input/draw/drawPetBadge/takeTreats`. See "Online mode" below.
 - `src/spotify.h` / `src/spotify.cpp`: Spotify mode (MODE_SPOTIFY, root menu index 7). Borrows the radio from online.cpp through `online::wifiAcquire/wifiRelease/wifiUp/wifiStatusText`; online's tick drives the connection while `wifiHold` is set, but runs no jobs unless `session` (Online mode) is open.
+- `src/vibe.h/.cpp` (pure C++), `src/pet_face.h/.cpp` (eye/mouth drawing moved out of main.cpp), `src/pet_music.h/.cpp` (poses + decor per vibe): the Music pet. Tools: `tools/vibetest/` (248 checks), `tools/petpreview/` (real face on PC + ASan torture). See "Music pet" below.
 - `tools/spotify_auth.py`: PKCE login helper run on the PC, writes SPOTIFY_CLIENT_ID / SPOTIFY_REFRESH_TOKEN into secrets.h.
 - `src/games.h` / `games.cpp`: Star Blaster, Sniper, Road Rush, Pinball (self-contained; main.cpp hands in an `Input` struct with buttons, calibrated tilt and shake, and owns the tilt calibration).
 - `tools/gamepreview/`: PC harness (real U8g2 on the PC) that renders menus/games to PNG sheets, runs scripted "AI players" and a sanitizer fuzz test. See "Games and menu revamp".
@@ -222,7 +223,7 @@ Tilt-controlled glass under a wandering tap, 20 s round, ends with % of drops ca
 The touch pad is Pet-mode only (as Home it misfired). Spotify mode: hold B 0.7 s to go back; B short press acts on release. Root menu order: Pet, Fluid, Stats, Motion test, Tools, Games, Online, Settings.
 
 ### Settings (MODE_SETTINGS)
-Brightness (contrast 8/60/150/255), Screen auto-off (Off/30 s/1 min/5 min; wakes on any button/touch/movement and swallows that first press; disabled in Fluid/Maze/Catch), Flip screen (180 deg, `setFlipMode`), Reset pet (B twice), Back. Stored in NVS keys `bright`/`sleep`/`flip`; `applyScreen()` must be called after every `display.begin()`. Tilt calibration is deliberately NOT here: each tilt mode re-zeroes with A.
+Rows (8): Brightness, Screen off, Flip, Menu style, Lyrics sync, Music pet (NVS `musicpet`, default 1), Reset pet (index 6), Back. Brightness (contrast 8/60/150/255), Screen auto-off (Off/30 s/1 min/5 min; wakes on any button/touch/movement and swallows that first press; disabled in Fluid/Maze/Catch), Flip screen (180 deg, `setFlipMode`), Reset pet (B twice), Back. Stored in NVS keys `bright`/`sleep`/`flip`; `applyScreen()` must be called after every `display.begin()`. Tilt calibration is deliberately NOT here: each tilt mode re-zeroes with A.
 
 ## Known caveats / things that will bite you
 - Keep the pet animation code unchanged unless Salman explicitly asks. Salman has confirmed the existing pet animations look good.
@@ -344,3 +345,11 @@ Salman asked for a repo review and for "all the small quick stuff first". Done:
 - **CI:** `.github/workflows/build.yml` runs `pio run` (with `secrets.example.h` copied to `secrets.h`) and `tools/hostcheck/check.sh` on every push, prints RAM/flash in the run summary and keeps `firmware.bin` as an artifact. If the workflow file did not make it to GitHub (the push token may lack the `workflow` scope), copy it in by hand.
 - **Docs:** button pins now match `config.h` (A=GPIO2, C=GPIO0; the docs said the opposite), stale "PAUSED" banner updated, dead `pcb/README.md` references explained, literal `\n` in the README checklist fixed, memory numbers refreshed.
 - **Open for Salman:** confirm A=2 / C=0 on the real board (pet tickle = A should be the button that was wired to GPIO2). Ideas he was shown, none approved yet: night sleep for the pet (`online::petHint()` has `is_day`), battery gauge on GPIO3 (2x100k divider), light/deep sleep with wake on GPIO 0-5, pet reacts to Spotify, gesture tricks, OTA with two ~1.69 MB slots, safe mode (hold B at boot), Wi-Fi setup portal, validating TLS certificates for the Spotify host instead of `setInsecure()`.
+
+### Music pet (2026-11-14; host-tested and PC-rendered only, NOT flashed)
+Salman asked for the pet to react to music with different reactions per genre.
+- **Flow:** Pet mode + Settings > Music pet On + screen on -> `spotify::enter()` as a background session (loop() block `musicBg` in main.cpp; leaves on screen-off / other mode). `spotify::getMusic()` returns `vibe::Music` (vibe, guessed, energy, beatMs, positionMs, singing, word, trackSeq). `petmusic::pose/decor` apply it in drawPet. Screen auto-off is suppressed while music plays in Pet mode.
+- **Genre source:** `GET /v1/artists/{id}` (`NW_GENRE` job) -> `vibe::fromGenres`. Spotify's Feb 2026 changelog removed popularity/followers; genres were not listed as removed, but NOT confirmed live. If the call fails, `vibe::guess` uses title words, Urdu/Hindi script and lyric speed, and the label shows `name?`. Serial logs: `genre: [...] -> vibe`, `lyrics: pace ...`. **Ask Salman for those lines.**
+- **Tempo:** no audio analysis exists, so `bpmFor(vibe, pace)` gives a feel-tempo (60-170) locked to song position. It looks in time but is not the real beat.
+- **Cost:** keeps Wi-Fi up (45 s linger in online.cpp) while Pet mode plays music; Settings > Music pet Off disables it.
+- **Check on the device:** genre accuracy for his playlists, whether each vibe looks right on the real OLED (chill cups, EDM strobe), battery drain, no stutter from the extra request.

@@ -21,13 +21,14 @@ static const Item GAMES[] = {{"Star Blaster", launcher::ICON_STAR}, {"Sniper", l
                              {"Pinball", launcher::ICON_PINBALL}, {"Tilt Maze", launcher::ICON_MAZE}, {"Snake", launcher::ICON_SNAKE}, {"Back", launcher::ICON_BACK}};
 static const Item TOOLS[] = {{"Temperature", launcher::ICON_TOOLS}, {"Magic 8-ball", launcher::ICON_8BALL}, {"Dice", launcher::ICON_DICE}, {"Back", launcher::ICON_BACK}};
 static const Item SETTINGS[] = {{"Brightness", launcher::ICON_BRIGHT}, {"Screen off", launcher::ICON_SCREEN_OFF}, {"Flip screen", launcher::ICON_FLIP},
-                                {"Menu style", launcher::ICON_STYLE}, {"Lyrics sync", launcher::ICON_SYNC}, {"Reset pet", launcher::ICON_RESET}, {"Back", launcher::ICON_BACK}};
+                                {"Menu style", launcher::ICON_STYLE}, {"Lyrics sync", launcher::ICON_SYNC}, {"Music pet", launcher::ICON_SPOTIFY},
+                                {"Reset pet", launcher::ICON_RESET}, {"Back", launcher::ICON_BACK}};
 static const Item ONLINE[] = {{"Clock", launcher::ICON_CLOCK}, {"Weather", launcher::ICON_WEATHER}, {"Forecast", launcher::ICON_FORECAST}, {"Air quality", launcher::ICON_AQI},
                               {"Currency", launcher::ICON_CURRENCY}, {"World clocks", launcher::ICON_WORLD}, {"Fact", launcher::ICON_FACT}, {"Advice", launcher::ICON_ADVICE},
                               {"Moon", launcher::ICON_MOON}, {"Net status", launcher::ICON_NET}, {"ISS", launcher::ICON_ISS}, {"GitHub", launcher::ICON_GITHUB},
                               {"Sync now", launcher::ICON_SYNC}, {"Back", launcher::ICON_BACK}};
 static const char *settingsVal(int i) {
-  static const char *v[] = {"Max", "1 min", "Off", "Carousel", "+0ms", "", ""};
+  static const char *v[] = {"Max", "1 min", "Off", "Carousel", "+0ms", "On", "", ""};
   return v[i];
 }
 static const char *onlineVal(int) { return "online"; }
@@ -154,8 +155,8 @@ int main(int argc, char **argv) {
   menuSheet("m_games_car.bin", GAMES, 7, 0, nullptr, {0, 3, 6});
   menuSheet("m_games_ring.bin", GAMES, 7, 1, nullptr, {0, 3, 6});
   menuSheet("m_tools_car.bin", TOOLS, 4, 0, nullptr, {0, 1, 3});
-  menuSheet("m_settings_car.bin", SETTINGS, 7, 0, settingsVal, {0, 3, 6});
-  menuSheet("m_settings_ring.bin", SETTINGS, 7, 1, settingsVal, {0, 3});
+  menuSheet("m_settings_car.bin", SETTINGS, 8, 0, settingsVal, {0, 5, 7});
+  menuSheet("m_settings_ring.bin", SETTINGS, 8, 1, settingsVal, {0, 5});
   menuSheet("m_online_car.bin", ONLINE, 14, 0, onlineVal, {0, 1, 13});
   menuSheet("m_online_ring.bin", ONLINE, 14, 1, onlineVal, {0, 7});
   iconSheet("icons.bin");

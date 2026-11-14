@@ -58,3 +58,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: Host syntax check
         run: bash tools/hostcheck/check.sh
+
+      # Genre / vibe classification, tempo and energy (pure C++).
+      - name: Vibe tests
+        run: bash tools/vibetest/run.sh
+
+      # The real pet face + music reactions drawn on the PC, then 20000 random frames under ASan/UBSan.
+      - name: Pet music preview (sanitizers)
+        run: |
+          SAN="-fsanitize=address,undefined" OUT=/tmp/pet-preview-build bash tools/petpreview/build.sh
+          mkdir -p /tmp/pet-preview-out
+          /tmp/pet-preview-build/petpreview /tmp/pet-preview-out

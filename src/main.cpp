@@ -11,6 +11,9 @@
 #include "living_oled.h"
 #include "launcher.h"
 #include "games.h"
+#include "pet_face.h"
+#include "pet_music.h"
+#include "vibe.h"
 
 // OLED: 1.3" SH1106 and MPU6050 share one hardware I2C bus (Wire: SDA = GPIO 8, SCL = GPIO 9).
 U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
@@ -196,7 +199,7 @@ const uint8_t BRIGHT_LEVELS[] = {8, 60, 150, 255};
 const char *BRIGHT_NAMES[] = {"Low", "Medium", "High", "Max"};
 const uint32_t SLEEP_MS[] = {0, 30000, 60000, 300000};
 const char *SLEEP_NAMES[] = {"Off", "30 s", "1 min", "5 min"};
-uint8_t setBright = 2, setSleep = 0, setFlip = 0, setLyric = 3, setMenu = 0;   // setMenu: 0 carousel, 1 tilt ring
+uint8_t setBright = 2, setSleep = 0, setFlip = 0, setLyric = 3, setMenu = 0, setMusicPet = 1;   // setMusicPet: the pet dances to Spotify (needs Wi-Fi)   // setMenu: 0 carousel, 1 tilt ring
 const int LYRIC_STEPS[] = {-500, -300, -150, 0, 150, 300, 500, 800};   // ms, + = lyrics earlier
 const int LYRIC_STEP_COUNT = 8;
 bool screenOff = false;
@@ -214,6 +217,7 @@ void loadSettings() {
   setFlip = prefs.getUChar("flip", 0) ? 1 : 0;
   setLyric = constrain(prefs.getUChar("lyoff", 3), 0, LYRIC_STEP_COUNT - 1);
   setMenu = prefs.getUChar("menu", 0) ? 1 : 0;
+  setMusicPet = prefs.getUChar("musicpet", 1) ? 1 : 0;
   for (int i = 0; i < games::COUNT; ++i) games::best[i] = prefs.getUInt(BEST_KEYS[i], 0);
   spotify::setLyricOffset(LYRIC_STEPS[setLyric]);
 }
@@ -224,6 +228,7 @@ void saveSettings() {
   prefs.putUChar("flip", setFlip);
   prefs.putUChar("lyoff", setLyric);
   prefs.putUChar("menu", setMenu);
+  prefs.putUChar("musicpet", setMusicPet);
 }
 
 void saveBest() {
@@ -288,8 +293,12 @@ Face currentFace(uint32_t now) {
   return F_NEUTRAL;
 }
 
-enum EyeStyle { EY_NORMAL, EY_ARC, EY_SPIRAL, EY_CLOSED };
-enum MouthType { M_FLAT, M_SMILE, M_CAT, M_BIG, M_O, M_FROWN, M_WAVY, M_TINY, M_YAWN };
+// The eyes and mouth are drawn by pet_face.cpp (so the PC preview can draw the same face).
+using petface::EyeStyle;
+using petface::MouthType;
+using petface::EY_NORMAL; using petface::EY_ARC; using petface::EY_SPIRAL; using petface::EY_CLOSED;
+using petface::M_FLAT; using petface::M_SMILE; using petface::M_CAT; using petface::M_BIG; using petface::M_O;
+using petface::M_FROWN; using petface::M_WAVY; using petface::M_TINY; using petface::M_YAWN;
 
 struct FaceParams {
   EyeStyle style;
@@ -374,121 +383,14 @@ uint32_t nextWanderAt = 0;
 int wanderX = 0, wanderY = 0;
 uint32_t nextHeartAt = 0;
 
-const int EYE_W = 30;
-const int EYE_H = 30;
-const int EYE_L_X = 40;
-const int EYE_R_X = 88;
-const int EYE_Y = 24;
-const int MOUTH_Y = 52;
+using petface::EYE_Y; using petface::EYE_L_X; using petface::EYE_R_X; using petface::MOUTH_Y;
 
 void drawEye(int cx, int cy, int side, EyeStyle style, float open, float pupil,
              float lid, float slant, float lower, int lx, int ly, uint32_t now) {
-  display.setDrawColor(1);
-
-  if (style == EY_ARC) {
-    for (int t = -1; t <= 1; t++) {
-      display.drawLine(cx - 11, cy + 5 + t, cx, cy - 6 + t);
-      display.drawLine(cx, cy - 6 + t, cx + 11, cy + 5 + t);
-    }
-    return;
-  }
-
-  if (style == EY_CLOSED) {
-    display.drawHLine(cx - 11, cy, 22);
-    display.drawHLine(cx - 10, cy + 1, 20);
-    return;
-  }
-
-  if (style == EY_SPIRAL) {
-    display.drawCircle(cx, cy, 12);
-    display.drawCircle(cx, cy, 7);
-    float a = (now / 90.0f) * (float)side;
-    display.drawDisc(cx + (int)(cosf(a) * 9.5f), cy + (int)(sinf(a) * 9.5f), 2);
-    display.drawDisc(cx, cy, 1);
-    return;
-  }
-
-  int w = EYE_W;
-  int h = max(3, (int)(EYE_H * open));
-  int top = cy - h / 2;
-  display.drawRBox(cx - w / 2, top, w, h, min(10, h / 2));
-
-  int pr = (int)pupil;
-  if (h >= 2 * pr + 2) {
-    int px = cx + lx;
-    int py = constrain(cy + ly, top + pr, top + h - pr);
-    display.setDrawColor(0);
-    display.drawDisc(px, py, pr);
-    display.setDrawColor(1);
-    display.drawDisc(px - pr / 3, py - pr / 3, max(1, pr / 4));   // little shine
-  }
-
-  display.setDrawColor(0);
-  if (lid > 0.01f) {
-    display.drawBox(cx - w / 2 - 1, top - 1, w + 2, (int)(h * lid) + 1);
-  }
-  if (fabsf(slant) > 0.05f) {
-    int outerX = cx + side * (w / 2 + 1);
-    int innerX = cx - side * (w / 2 + 1);
-    int sd = (int)(fabsf(slant) * h * 0.55f);
-    if (slant > 0) {   // angry: inner corner drops
-      display.drawTriangle(outerX, top - 1, innerX, top - 1, innerX, top + sd);
-    } else {           // sad: outer corner drops
-      display.drawTriangle(outerX, top - 1, innerX, top - 1, outerX, top + sd);
-    }
-  }
-  if (lower > 0.01f) {
-    int lh = (int)(h * lower);
-    display.drawBox(cx - w / 2 - 1, top + h - lh, w + 2, lh + 1);
-  }
-  display.setDrawColor(1);
+  petface::drawEye(display, cx, cy, side, style, open, pupil, lid, slant, lower, lx, ly, now);
 }
 
-void drawMouth(MouthType m, int y, uint32_t now) {
-  display.setDrawColor(1);
-  switch (m) {
-    case M_FLAT:
-      display.drawHLine(58, y, 12);
-      break;
-    case M_SMILE:
-      display.drawLine(56, y - 2, 60, y + 1);
-      display.drawHLine(60, y + 1, 8);
-      display.drawLine(68, y + 1, 72, y - 2);
-      break;
-    case M_CAT:
-      display.drawLine(56, y - 1, 60, y + 2);
-      display.drawLine(60, y + 2, 64, y - 1);
-      display.drawLine(64, y - 1, 68, y + 2);
-      display.drawLine(68, y + 2, 72, y - 1);
-      break;
-    case M_BIG:
-      display.drawDisc(64, y - 3, 7, U8G2_DRAW_LOWER_LEFT | U8G2_DRAW_LOWER_RIGHT);
-      break;
-    case M_O:
-      display.drawCircle(64, y, 3);
-      break;
-    case M_FROWN:
-      display.drawLine(57, y + 2, 61, y - 1);
-      display.drawHLine(61, y - 1, 6);
-      display.drawLine(67, y - 1, 71, y + 2);
-      break;
-    case M_WAVY:
-      for (int i = 0; i < 6; i++) {
-        int y0 = y + ((i % 2) ? 2 : -2);
-        int y1 = y + ((i % 2) ? -2 : 2);
-        display.drawLine(52 + i * 4, y0, 56 + i * 4, y1);
-      }
-      break;
-    case M_TINY:
-      display.drawHLine(61, y, 6);
-      break;
-    case M_YAWN: {
-      int r = 2 + (int)((sinf(now / 300.0f) + 1.0f) * 2.5f);
-      display.drawDisc(64, y, r);
-      break;
-    }
-  }
-}
+void drawMouth(MouthType m, int y, uint32_t now, int dx = 0) { petface::drawMouth(display, m, y, now, dx); }
 
 void drawZzz(uint32_t now) {
   display.setFont(u8g2_font_6x10_tf);
@@ -500,9 +402,33 @@ void drawZzz(uint32_t now) {
 
 void petTilt(float &tx, float &ty);   // defined with the tilt helper below
 
+bool petMusicPlaying = false;   // the pet is dancing right now (keeps the screen from switching off)
+
 void drawPet(uint32_t now) {
   Face face = currentFace(now);
   FaceParams p = faceParams(face, now);
+
+  // Music: while a track plays and nothing else is happening to the pet (tickle, boop, dizzy ...) it dances. The look
+  // depends on the vibe (genre, or a guess): see pet_music.cpp. A new song gets a surprised "ooh" first.
+  vibe::Music mus = {};
+  petmusic::Pose mp = {};
+  bool music = false;
+  if (setMusicPet && now >= overlayUntil && spotify::getMusic(mus, now)) {
+    static uint32_t seenSeq = 0;
+    if (mus.trackSeq != seenSeq) {
+      bool firstTrack = (seenSeq == 0);
+      seenSeq = mus.trackSeq;
+      if (!firstTrack) { trigger(OV_SURPRISED, 700); face = currentFace(now); p = faceParams(face, now); }
+    }
+    if (now >= overlayUntil) {
+      music = true;
+      mp = petmusic::pose(mus, now);
+      face = F_NEUTRAL;                                  // no sleepy / sad face while the music plays
+      p.style = mp.eye; p.open = mp.open; p.pupil = mp.pupil; p.lid = mp.lid; p.slant = mp.slant; p.lower = mp.lower;
+      p.lookBiasY = mp.lookY; p.mouth = mp.mouth;
+    }
+  }
+  petMusicPlaying = music;
 
   // Blink and wink (only when the eyes are open and normal).
   bool normalEyes = (p.style == EY_NORMAL);
@@ -545,7 +471,8 @@ void drawPet(uint32_t now) {
   // Gentle breathing bob, jitter while laughing.
   int bob = (int)roundf(sinf(now / (face == F_SLEEPING ? 900.0f : 650.0f)) * 1.3f);
   if (face == F_LAUGH) bob += ((now / 60) % 2) ? 1 : -1;
-  int cy = EYE_Y + bob;
+  int mdx = music ? mp.dx : 0, mdy = music ? mp.dy : 0;      // the dance moves the whole face
+  int cy = EYE_Y + bob + mdy;
 
   // Hearts while purring.
   if (face == F_PURR && now >= nextHeartAt) {
@@ -555,10 +482,11 @@ void drawPet(uint32_t now) {
 
   int lx = (int)roundf(eLookX);
   int ly = (int)roundf(eLookY);
-  drawEye(EYE_L_X, cy, -1, p.style, eOpen * eBlink, ePupil, eLid, eSlant, eLower, lx, ly, now);
-  drawEye(EYE_R_X, cy, +1, p.style, eOpen * eBlink * eWink, ePupil, eLid, eSlant, eLower, lx, ly, now);
-  drawMouth(p.mouth, MOUTH_Y + bob, now);
+  drawEye(EYE_L_X + mdx, cy, -1, p.style, eOpen * eBlink, ePupil, eLid, eSlant, eLower, lx, ly, now);
+  drawEye(EYE_R_X + mdx, cy, +1, p.style, eOpen * eBlink * eWink, ePupil, eLid, eSlant, eLower, lx, ly, now);
+  drawMouth(p.mouth, MOUTH_Y + bob + mdy, now, mdx);
   drawHearts(now);
+  if (music) petmusic::decor(display, mus, mp, cy, now);
   if (face == F_SLEEPING) drawZzz(now);
 }
 
@@ -1123,10 +1051,11 @@ void drawStats() {
 
 bool resetArmed = false;
 uint32_t settingsMsgUntil = 0;
-const int SETTINGS_ROWS = 7;
+const int SETTINGS_ROWS = 8;
 const launcher::Item settingsMenu[SETTINGS_ROWS] = {
   {"Brightness", launcher::ICON_BRIGHT}, {"Screen off", launcher::ICON_SCREEN_OFF}, {"Flip screen", launcher::ICON_FLIP},
-  {"Menu style", launcher::ICON_STYLE}, {"Lyrics sync", launcher::ICON_SYNC}, {"Reset pet", launcher::ICON_RESET}, {"Back", launcher::ICON_BACK}};
+  {"Menu style", launcher::ICON_STYLE}, {"Lyrics sync", launcher::ICON_SYNC}, {"Music pet", launcher::ICON_SPOTIFY},
+  {"Reset pet", launcher::ICON_RESET}, {"Back", launcher::ICON_BACK}};
 
 const char *settingsValue(int i) {                  // the little pill under the name
   static char buf[12];
@@ -1136,7 +1065,8 @@ const char *settingsValue(int i) {                  // the little pill under the
     case 2: return setFlip ? "On" : "Off";
     case 3: return setMenu ? "Tilt ring" : "Carousel";
     case 4: snprintf(buf, sizeof(buf), LYRIC_STEPS[setLyric] > 0 ? "+%dms" : "%dms", LYRIC_STEPS[setLyric]); return buf;
-    case 5: return resetArmed ? "Sure? B" : "";
+    case 5: return setMusicPet ? "On" : "Off";
+    case 6: return resetArmed ? "Sure? B" : "";
     default: return "";
   }
 }
@@ -1393,7 +1323,8 @@ void loop() {
       lastInteraction = lastActivity = now;
     }
   } else if (setSleep && oledUp && SLEEP_MS[setSleep] && now - lastActivity > SLEEP_MS[setSleep] &&
-             mode != MODE_FLUID && mode != MODE_TILT_MAZE && mode != MODE_GAME && mode != MODE_SNAKE && mode != MODE_SPOTIFY && mode != MODE_LYRICS_VISUAL && mode != MODE_LIVING_OLED) {
+             mode != MODE_FLUID && mode != MODE_TILT_MAZE && mode != MODE_GAME && mode != MODE_SNAKE && mode != MODE_SPOTIFY && mode != MODE_LYRICS_VISUAL && mode != MODE_LIVING_OLED &&
+             !(mode == MODE_PET && petMusicPlaying)) {
     screenOff = true;
     display.setPowerSave(1);
   }
@@ -1403,6 +1334,17 @@ void loop() {
 
   gameTick(now);
   online::tick(now);
+  {                                                                  // Music pet: the pet on screen keeps a Spotify session open in the background
+    static bool musicBg = false;                                     // (Wi-Fi + one small request every few seconds; it stops with the screen / when you leave)
+    bool want = setMusicPet && mode == MODE_PET && !screenOff && oledUp;
+    if (want && !musicBg) {
+      musicBg = true;
+      spotify::enter();
+    } else if (!want && musicBg) {
+      musicBg = false;
+      if (mode != MODE_SPOTIFY && mode != MODE_LYRICS_VISUAL) spotify::leave();   // those modes own the session now
+    }
+  }
   spotify::tick(now);
   for (int t = online::takeTreats(); t > 0; t--) addHappy(1);   // each successful fetch is a small treat
 
@@ -1548,7 +1490,7 @@ void loop() {
   } else if (mode == MODE_TOOLS || mode == MODE_GAMES || mode == MODE_SETTINGS) {
     bool longB;
     int pick = menuPick(now, a, b, c, longB);                          // same controls as the home menu; hold B = up one level
-    if (mode == MODE_SETTINGS && launcher::selected() != 5) resetArmed = false;
+    if (mode == MODE_SETTINGS && launcher::selected() != 6) resetArmed = false;
     if (longB) {
       enterMode(MODE_MENU);
     } else if (pick >= 0 && mode == MODE_TOOLS) {
@@ -1569,7 +1511,8 @@ void loop() {
       else if (pick == 2) { setFlip ^= 1; applyScreen(); saveSettings(); }
       else if (pick == 3) { setMenu ^= 1; launcher::restyle(setMenu, now); saveSettings(); }
       else if (pick == 4) { setLyric = (setLyric + 1) % LYRIC_STEP_COUNT; spotify::setLyricOffset(LYRIC_STEPS[setLyric]); saveSettings(); }
-      else if (pick == 5) {
+      else if (pick == 5) { setMusicPet ^= 1; saveSettings(); }
+      else if (pick == 6) {
         if (resetArmed) { resetPet(); resetArmed = false; settingsMsgUntil = millis() + 1500; }
         else resetArmed = true;
       } else enterMode(MODE_MENU);

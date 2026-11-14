@@ -4,6 +4,7 @@
 // SPOTIFY_REFRESH_TOKEN into src/secrets.h. All state lives in spotify.cpp.
 #include <Arduino.h>
 #include <U8g2lib.h>
+#include "vibe.h"
 
 namespace spotify {
 
@@ -34,5 +35,9 @@ struct LyricsView {
 };
 void setLyricOffset(int ms);                       // Settings > Lyrics sync: + shows lyrics earlier, - later
 bool getLyricsView(LyricsView &out, uint32_t now);
+
+// For the pet: what is playing and what it is like (genre, lyric speed, singing). Returns true only while a track is
+// playing. Works with just a background session (enter() called by Pet mode, nothing drawn by Spotify).
+bool getMusic(vibe::Music &out, uint32_t now);
 
 }  // namespace spotify

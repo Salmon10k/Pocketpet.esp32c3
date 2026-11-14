@@ -2,6 +2,7 @@
 #include "online.h"
 #include "arabic_shape.h"
 #include "lyric_timing.h"
+#include "vibe.h"
 #include "config.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -309,7 +310,8 @@ int wrapText(const char *s, int cols, int maxLines, char out[][26]) {
 enum Phase : uint8_t { P_WIFI, P_LOGIN, P_RUN, P_ERROR };
 enum Lyr : uint8_t { L_NONE, L_WANT, L_HAVE, L_MISSING };
 enum Cmd : uint8_t { C_NONE, C_PLAY, C_PAUSE, C_NEXT, C_PREV };
-enum NetWork : uint8_t { NW_NONE, NW_LOGIN, NW_POLL, NW_LYRICS, NW_COMMAND };
+enum NetWork : uint8_t { NW_NONE, NW_LOGIN, NW_POLL, NW_LYRICS, NW_COMMAND, NW_GENRE };
+enum Gen : uint8_t { G_NONE, G_WANT, G_DONE };     // the artist's genres (for the pet's music reactions)
 
 SemaphoreHandle_t stateMutex = nullptr;
 TaskHandle_t netTaskHandle = nullptr;
@@ -369,6 +371,50 @@ bool hinted = false;
 int drawnTarget = -2, oldTarget = -1;      // lyric line shown last frame / the one sliding out
 uint32_t tAt = 0, trackAt = 0;             // when the current line / the current track started to slide in
 uint32_t noteUntil = 0;
+
+// ---- what the music is like (the pet reacts to it, see vibe.h)
+char artistId[40] = "";
+Gen gen = G_NONE;
+uint8_t genTries = 0;
+uint32_t genAt = 0;
+char genreText[96] = "";                    // the artist's genres from Spotify, lower case, joined with ", "
+vibe::Vibe vibeGenre = vibe::V_NONE;        // from the genres (V_NONE = Spotify sent none, or none matched)
+vibe::Vibe vibeNow = vibe::V_NONE;          // what the pet uses: the genre vibe, else a guess
+bool vibeGuessed = true;
+int paceX10 = 0;                            // lyric speed, syllables per second x10 (0 = unknown)
+bool nonLatin = false;                      // most lyric lines are Urdu / Arabic / Hindi ... script
+uint32_t trackSeq = 0;                      // bumps with every new track
+
+// Lyric speed over the time lines are actually sung, and whether the lyrics are mostly non-Latin script.
+void lyricStats(int &pace10, bool &nonLat) {
+  uint32_t syl = 0, ms = 0;
+  int counted = 0, nl = 0;
+  for (int i = 0; i < lineCount; i++) {
+    const char *s = pool + lines[i].off;
+    if (!s[0]) continue;
+    uint32_t span = (i + 1 < lineCount ? lines[i + 1].ms : lines[i].ms + 4000) - lines[i].ms;
+    if (span < 300) continue;
+    if (span > 8000) span = 8000;                        // a long gap is not "slow singing"
+    counted++;
+    bool rtl = ((unsigned char)s[0]) == 0x1B;            // Urdu / Arabic line (raw UTF-8 after the marker)
+    const char *base = rtl ? s + 1 : s;
+    int len = (int)strlen(base), q = 0;
+    for (const char *c = base; *c; c++) if (*c == '?') q++;   // Hindi etc. turn into '?' in the Latin-1 pool
+    if (rtl || (len > 0 && q * 3 >= len)) nl++;
+    int ts[lyric_timing::MAX_WORDS], te[lyric_timing::MAX_WORDS];
+    int n = tokenize(base, ts, te, lyric_timing::MAX_WORDS);
+    for (int w = 0; w < n; w++) syl += rtl ? 2U : (uint32_t)lyric_timing::syllables(base + ts[w], te[w] - ts[w]);
+    ms += span;
+  }
+  pace10 = ms >= 20000 ? (int)(syl * 10000UL / ms) : 0;  // under 20 s of lyrics: not enough to judge
+  nonLat = counted > 0 && nl * 10 >= counted * 3;
+}
+
+void updateVibeLocked() {                                // call with the state lock held
+  if (vibeGenre != vibe::V_NONE) { vibeNow = vibeGenre; vibeGuessed = false; return; }
+  vibeNow = vibe::guess(title, artist, nonLatin, paceX10);
+  vibeGuessed = true;
+}
 
 void setNote(const char *m, uint32_t now) {
   StateGuard guard;
@@ -532,6 +578,11 @@ void applyTrack(const char *id, const char *t, const char *al, const char *ar, c
   drawnTarget = -2;
   oldTarget = -1;
   trackAt = tAt = millis();
+  genreText[0] = 0;                                      // a new track: the old genre / lyric speed no longer apply
+  vibeGenre = vibe::V_NONE;
+  paceX10 = 0;
+  nonLatin = false;
+  ++trackSeq;
 }
 
 void poll(uint32_t now) {
@@ -569,6 +620,7 @@ void poll(uint32_t now) {
   JsonObject fi = f["item"].to<JsonObject>();
   fi["id"] = true; fi["name"] = true; fi["duration_ms"] = true;
   fi["artists"][0]["name"] = true;
+  fi["artists"][0]["id"] = true;
   fi["album"]["name"] = true;
   fi["show"]["name"] = true;
   if (deserializeJson(doc, r.body.c_str(), DeserializationOption::Filter(f))) { nextPoll = t1 + 4000; return; }
@@ -620,6 +672,13 @@ void poll(uint32_t now) {
   if (strcmp(id, trackId) != 0 || (!id[0] && strcmp(name, title) != 0)) {
     applyTrack(id, name, al, ar, all, dur);
     if (podcast) lyr = L_MISSING;
+    const char *aid = it["artists"][0]["id"] | "";
+    strncpy(artistId, aid, sizeof(artistId) - 1);
+    artistId[sizeof(artistId) - 1] = 0;
+    gen = (artistId[0] && !podcast) ? G_WANT : G_DONE;   // ask for the artist's genres next (same connection as this poll)
+    genTries = 0;
+    genAt = 0;
+    updateVibeLocked();                                  // a first guess from the title right away
   }
   nextPoll = t1 + (playing ? POLL_PLAYING_MS : POLL_PAUSED_MS);
 }
@@ -662,6 +721,54 @@ void sendCommand(uint32_t now) {
   }
   nextPoll = t1 + 300;
 }
+// ---------------------------------------------------------------- artist genres (for the pet)
+// One small request per new track, on the same connection the poll just used. If Spotify answers with an error or no
+// genres the pet simply guesses from the title and the lyrics (vibe::guess); nothing else depends on this.
+void fetchGenre(uint32_t now) {
+  char id[sizeof(artistId)];
+  char accessToken[sizeof(token)];
+  {
+    StateGuard guard;
+    if (!currentWorkLocked() || gen != G_WANT || !artistId[0]) return;
+    strncpy(id, artistId, sizeof(id) - 1); id[sizeof(id) - 1] = 0;
+    strncpy(accessToken, token, sizeof(accessToken) - 1); accessToken[sizeof(accessToken) - 1] = 0;
+  }
+  char path[64];
+  snprintf(path, sizeof(path), "/v1/artists/%s", id);
+  Reply r = request("api.spotify.com", "GET", path, accessToken, nullptr, true);
+  uint32_t t1 = millis();
+  StateGuard guard;
+  if (!currentWorkLocked()) return;
+  if (strcmp(id, artistId) != 0) return;                  // the track changed while we asked
+  if (r.code == 401) { haveToken = false; return; }       // log in again, then this is asked again
+  if (r.code == 429) { blockedUntil = t1 + 15000; return; }
+  if (r.code != 200) {
+    if (Serial) Serial.printf("genre: artist %s -> %d\n", id, r.code);
+    if (r.code == 403 || r.code == 404 || ++genTries >= 2) { gen = G_DONE; updateVibeLocked(); }
+    else genAt = t1 + 3000;
+    return;
+  }
+  JsonDocument doc, f;
+  f["genres"] = true;
+  genreText[0] = 0;
+  if (!deserializeJson(doc, r.body.c_str(), DeserializationOption::Filter(f))) {
+    size_t n = 0;
+    for (JsonVariantConst g : doc["genres"].as<JsonArrayConst>()) {
+      const char *gs = g.as<const char *>();
+      if (!gs) continue;
+      size_t l = strlen(gs);
+      if (n + l + 3 >= sizeof(genreText)) break;
+      if (n) { genreText[n++] = ','; genreText[n++] = ' '; }
+      for (size_t i = 0; i < l; i++) genreText[n++] = (gs[i] >= 'A' && gs[i] <= 'Z') ? (char)(gs[i] + 32) : gs[i];
+      genreText[n] = 0;
+    }
+  }
+  vibeGenre = vibe::fromGenres(genreText);
+  gen = G_DONE;
+  updateVibeLocked();
+  if (Serial) Serial.printf("genre: [%s] -> %s%s\n", genreText, vibe::name(vibeNow)[0] ? vibe::name(vibeNow) : "none", vibeGuessed ? " (guessed)" : "");
+}
+
 // ---------------------------------------------------------------- lyrics (LRCLIB)
 bool lyricsRequest(const char *titleForLookup, const char *artistForLookup,
                    const char *albumForLookup, uint32_t trackDurationMs,
@@ -722,7 +829,14 @@ void fetchLyrics(uint32_t now) {
   if (!currentWorkLocked()) return;
   curLine = -1;
   lyrCode = code;
-  if (ok) { lyr = L_HAVE; return; }
+  if (ok) {
+    lyr = L_HAVE;
+    lyricStats(paceX10, nonLatin);                         // lyric speed + script: what the pet's vibe guess uses
+    updateVibeLocked();
+    if (Serial) Serial.printf("lyrics: pace %d.%d syl/s, non-latin %d -> %s%s\n", paceX10 / 10, paceX10 % 10, (int)nonLatin,
+                              vibe::name(vibeNow)[0] ? vibe::name(vibeNow) : "none", vibeGuessed ? " (guessed)" : "");
+    return;
+  }
   lineCount = 0;
   if (code == 404) { lyr = L_MISSING; return; }
   if (++lyrTries >= 3) { lyr = L_MISSING; return; }
@@ -785,6 +899,7 @@ void spotifyNetworkTask(void *) {
         }
         case NW_POLL:    poll(millis()); break;
         case NW_LYRICS:  fetchLyrics(millis()); break;
+        case NW_GENRE:   fetchGenre(millis()); break;
         case NW_COMMAND: sendCommand(millis()); break;
         default: break;
       }
@@ -900,6 +1015,35 @@ bool getLyricsView(LyricsView &out, uint32_t now) {
   return true;
 }
 
+// Read-only snapshot for the pet (Pet mode with Settings > Music pet). Works with only a background session open: nothing
+// is drawn by Spotify mode, so this counts as "the frame was drawn" that lets the next request start.
+bool getMusic(vibe::Music &out, uint32_t now) {
+  memset(&out, 0, sizeof(out));
+  out.word = -1;
+  StateGuard guard;
+  if (!isOpen) return false;
+  drawnSince = true;
+  if (!haveTrack || !playing) return false;
+  out.active = true;
+  out.vibe = vibeNow;
+  out.guessed = vibeGuessed;
+  out.energy = (uint8_t)vibe::energyFor(paceX10);
+  out.beatMs = (uint16_t)(60000 / vibe::bpmFor(vibeNow, paceX10));
+  out.positionMs = position(now);
+  out.trackSeq = trackSeq;
+  if (lyr == L_HAVE && lineCount > 0) {
+    uint32_t t = out.positionMs;
+    int target = -1;
+    for (int i = 0; i < lineCount && lines[i].ms <= t; ++i) target = i;
+    if (target >= 0 && pool[lines[target].off]) {
+      uint32_t end = target + 1 < lineCount ? lines[target + 1].ms : lines[target].ms + 4000;
+      out.singing = true;
+      out.word = (int16_t)wordFocus(target, (int32_t)t - (int32_t)lines[target].ms, end - lines[target].ms);
+    }
+  }
+  return true;
+}
+
 void enter() {
   if (!ensureNetworkWorker()) {
     StateGuard guard;
@@ -979,6 +1123,10 @@ void tick(uint32_t now) {
 
   if (cmd != C_NONE && (int32_t)(now - cmdAt) >= 0) {
     if (!workerBusy && pendingWork == NW_NONE) pendingWork = NW_COMMAND;
+    return;
+  }
+  if (gen == G_WANT && (int32_t)(now - genAt) >= 0 && haveTrack) {      // before the lyrics: still on the Spotify connection
+    if (!workerBusy && pendingWork == NW_NONE) pendingWork = NW_GENRE;
     return;
   }
   if (lyr == L_WANT && (int32_t)(now - lyrAt) >= 0 && haveTrack && durMs) {

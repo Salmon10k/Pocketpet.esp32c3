@@ -106,6 +106,7 @@ Particle water simulation that follows tilt. Hold the device like a phone, it ca
 - **Motion:** shake = dizzy spiral eyes (and a small happiness drop). A sharp pickup, bump or drop = surprised.
 - **Buttons in Pet mode:** A = tickle (laughs), C = boop (surprised), B = back to the menu.
 - Any touch, button press or movement wakes it up.
+- **Music pet (Settings > Music pet, default On):** while Spotify is playing, Pet mode quietly opens a Spotify session (Wi-Fi, so it costs battery; it drops when the screen turns off or you leave Pet mode) and the pet dances to the song. The reaction depends on the vibe: **Chill** (eyes closed, headphones, slow sway), **Pop** (happy eyes, bounce, notes and sparkles), **Hype** (shades, head nods, impact lines), **Rock** (angry eyes, headbang, lightning), **EDM** (big pulsing pupils, equalizer, strobe on the bar), **Desi** (dreamy eyes, wide sway, hearts), **Dreamy** (starry eyes, twinkles). The mouth flaps on sung words. The vibe name flashes briefly when a track starts; a trailing **?** means it was guessed (no genre data) from the title and lyric speed. The beat is a steady feel-tempo per vibe locked to the song position, not the song's real BPM (Spotify no longer gives tempo).
 
 ### Stats
 Happiness and energy are saved to flash (about every 2 minutes when they changed, and when leaving Pet mode), so the pet remembers across reboots. The Stats screen shows both bars and a lifetime pet count. **A or C flips it to a System page** with the numbers that matter for debugging: FPS (frames sent to the OLED, capped at 25), how often `loop()` runs, free heap, lowest free heap since boot, the largest free block (the real limit for a TLS connection), app size, uptime and why the chip last restarted. Open it before and after using Online or Spotify to see how much heap they eat.
@@ -129,6 +130,8 @@ Happiness and energy are saved to flash (about every 2 minutes when they changed
 ## Files
 - `src/main.cpp` -> main firmware and pet logic
 - `src/online.h` / `src/online.cpp` -> Online mode (Wi-Fi state machine, request cache, the 12 screens)
+- `src/vibe.*` -> genre to vibe classification, feel-tempo, energy (pure C++)
+- `src/pet_face.*` / `src/pet_music.*` -> pet eyes and mouth drawing; per-vibe dance poses and decorations
 - `src/spotify.h` / `src/spotify.cpp` -> Spotify mode (token refresh, now playing, controls, LRCLIB lyrics)
 - `tools/spotify_auth.py` -> one-time Spotify login helper (PC)
 - `src/config.h` -> all GPIO assignments, I2C addresses and pet tuning
