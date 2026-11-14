@@ -1,9 +1,10 @@
 # HANDOFF: read this first if you are an agent (or human) continuing the project
 
-## Project paused (2026-10-30), resumed for one task on 2026-11-12
-Salman paused the project. Do not start new work, features or refactors unless he says to resume.
-On 2026-11-12 he asked for a games + menus revamp (see "Games and menu revamp" at the bottom); that is done in code
-and host-tested, not yet flashed. Otherwise the pause still stands.
+## Project paused (2026-10-30), active again in small steps (2026-11-12 and 2026-11-14)
+Salman paused the project. On 2026-11-12 he asked for a games + menus revamp (see "Games and menu revamp" at the
+bottom); that is done in code and host-tested, not yet flashed. On 2026-11-14 he asked for a repo review and for the
+small quick fixes first (see "Review fixes 2026-11-14" at the bottom). Do not start big new features or refactors
+unless he asks; he is choosing from a list of ideas (battery gauge, night sleep, deep sleep, ...).
 
 **State when paused**
 - Firmware on `main` (last commit before the pause: `b2318d5`, word timing in lyric lines). Hardware is the
@@ -13,19 +14,22 @@ and host-tested, not yet flashed. Otherwise the pause still stands.
 - Tested on the device: pet mode, stats, I2C swap, touch, Temperature, Magic 8-ball, Dice.
 - Written and host-checked only, never confirmed on hardware (see the Status table and the per-feature notes
   below): Online mode, Spotify mode and its lyric worker, Lyrics visual, Quick connect, Wi-Fi fixes,
-  Urdu/Arabic lyrics, word timing, Snake, Flappy, Tilt Maze, Dino Runner, Fluid, Catch Water, Settings.
+  Urdu/Arabic lyrics, word timing, Snake, Tilt Maze, Fluid, Settings, the new games and launcher. (Flappy, Dino Runner
+  and Catch Water were removed on 2026-11-12.)
   The `feature/lyrics-visualizer` branch history is described below; check `git branch -a` before assuming
   it was merged.
-- Custom PCB: a ghost-shaped KiCad board was designed but is not finished or ordered. Everything about it
-  lives in `pcb/README.md` (outline SVG, KiCad placement script, layout coordinates and a list of schematic
-  problems to fix first, including the battery connector wired to the wrong net).
+- Custom PCB: a ghost-shaped KiCad board was designed but is not finished or ordered. NOTE (2026-11-14): the
+  `pcb/README.md` that used to describe it (outline SVG, KiCad placement script, layout coordinates and a list of
+  schematic problems, including the battery connector wired to the wrong net) is NOT in the repo any more; `PCB/`
+  only holds the raw KiCad files (`PCB.kicad_sch/pcb/pro/prl`). Check the schematic's battery connector net before
+  ordering anything.
 - Not started: battery monitoring (GPIO3 divider), deep sleep with wake on touch, Pomodoro/Stopwatch,
   Spirit level, Step counter, pet sleeps at night.
 
 **To resume**
 1. Ask Salman what he wants first. The safest start is to build with PlatformIO, flash, and report the
    serial log and memory numbers for the untested modes.
-2. For the PCB, follow "To resume" in `pcb/README.md`.
+2. For the PCB, open `PCB/PCB.kicad_pro` in KiCad (the old `pcb/README.md` notes are gone, see above).
 3. Keep the rules below (do not change pins, keep the pet animation code, no secrets in the repo).
 
 Owner: Salman (GitHub: Salmon10k). Student, new to soldering, builds on a protoboard, flashes with
@@ -42,7 +46,7 @@ Pocketpet: a keychain-sized ESP32-C3 Super Mini gadget with a 1.3" SH1106 128x64
 | Part | GPIO | Notes |
 |------|------|-------|
 | OLED + MPU6050 SDA/SCL | 8 / 9 | ONE shared HARDWARE I2C bus (`Wire`), 400 kHz; OLED 0x3C (U8g2 `..._F_HW_I2C`), MPU6050 0x68 (raw register reads). Changed from separate buses (MPU on SoftWire GPIO 5/6) on 2026-11-09 at Salman's request; GPIO 5/6 are now free. |
-| Button A / B / C | 0 / 1 / 2 | to GND, internal pull-up, active LOW |
+| Button A / B / C | 2 / 1 / 0 | to GND, internal pull-up, active LOW. Matches `config.h` (docs used to say A=0, C=2; fixed 2026-11-14, Salman should confirm on the board) |
 | Touch pad OUT | 4 | HIGH when touched |
 | Free ADC pin | 3 | reserved for the battery voltage divider |
 
@@ -80,7 +84,7 @@ Current implementation uses a `Mode` enum and dispatches input/drawing in `main.
 - No secrets in the repo (the repo is public). WiFi credentials and the user's coordinates live in
   `src/secrets.h`, which is gitignored; `src/secrets.example.h` is the template. Never commit `secrets.h`.
 - Commit messages in this repo end with the Co-Authored-By / session trailers the harness asks for.
-- Memory numbers: the first pet version was RAM 4.9%, flash 23.1% of the default 1.3 MB app slot. After Online mode (Wi-Fi + TLS + ArduinoJson) Salman reported about 21% flash left, i.e. roughly 79% used of the 1.3 MB slot. So `platformio.ini` now uses `partitions.csv` (one 3 MB app slot, no OTA, nvs at the same address so saved stats survive). The first upload after that change rewrites the partition table. Serial prints one `flash: app ... heap free ...` line in the boot log and a heap line after each Online sync: ask Salman for those numbers before deciding to cut features.
+- Memory numbers: the first pet version was RAM 4.9%, flash 23.1% of the default 1.3 MB app slot. After Online mode (Wi-Fi + TLS + ArduinoJson) Salman reported about 21% flash left, i.e. roughly 79% used of the 1.3 MB slot. So `platformio.ini` now uses `partitions.csv` (one 3 MB app slot, no OTA, nvs at the same address so saved stats survive). The first upload after that change rewrites the partition table. Serial prints one `flash: app ... heap free ...` line in the boot log and a heap line after each Online sync: ask Salman for those numbers before deciding to cut features. Latest build (2026-11-14, PlatformIO summary): RAM 31.7% (103,772 of 327,680 bytes, static), flash 36.0% (1,133,192 of 3,145,728 bytes). Runtime heap is on Stats > System (press A on Stats) and in the serial status line.
 
 ## Testing (important)
 - In the agent sandbox PlatformIO cannot download the ESP32 toolchain, so NOTHING can be compiled for the
@@ -333,3 +337,10 @@ Salman: on battery power only, entering Online mode reboots the device (fine on 
 - Best scores: NVS keys `bestStar/bestSnip/bestRoad/bestPin`, written once when a new best is set.
 **PC tooling.** `tools/gamepreview/build.sh` then `/tmp/pocketpet-preview/preview OUTDIR` writes frame dumps (`python3 tools/fluidtest/render.py OUTDIR/x.bin x.png 3` makes a contact sheet) and prints the AI-player results; `preview OUTDIR fuzz` is the random-input torture test (build it with `-fsanitize=address,undefined`, see the command in the commit message of this change). It includes `games.cpp` directly, so tests can read game internals.
 **Check on the device.** (1) every menu in both styles, Back items, hold B; (2) each game: tilt direction feels right (if a game steers the wrong way the tilt helper's axes are the place), frame rate (Road Rush and Sniper redraw the most), difficulty; (3) Pinball: do the flippers feel strong enough, does shake-nudge trigger too easily (`0.55 g` threshold in `pin::step`); (4) Snake tilt dead zone; (5) Online list pill text while connecting.
+
+### Review fixes 2026-11-14 (host-checked only, not flashed)
+Salman asked for a repo review and for "all the small quick stuff first". Done:
+- **Stats > System page** (`drawStats()` in main.cpp, `statsPage`, `dbgFps/dbgLoopHz`): on the Stats screen A or C flips between the pet bars and a system page (FPS, loop rate, free heap, min heap, largest free block, app size, uptime, reset reason). The serial status line also prints `fps= heapK= minK= blockK=`. This answers the "C3 cost unmeasured" and heap questions above: ask Salman for a screenshot / serial lines after using Online, Spotify and Lyrics visual.
+- **CI:** `.github/workflows/build.yml` runs `pio run` (with `secrets.example.h` copied to `secrets.h`) and `tools/hostcheck/check.sh` on every push, prints RAM/flash in the run summary and keeps `firmware.bin` as an artifact. If the workflow file did not make it to GitHub (the push token may lack the `workflow` scope), copy it in by hand.
+- **Docs:** button pins now match `config.h` (A=GPIO2, C=GPIO0; the docs said the opposite), stale "PAUSED" banner updated, dead `pcb/README.md` references explained, literal `\n` in the README checklist fixed, memory numbers refreshed.
+- **Open for Salman:** confirm A=2 / C=0 on the real board (pet tickle = A should be the button that was wired to GPIO2). Ideas he was shown, none approved yet: night sleep for the pet (`online::petHint()` has `is_day`), battery gauge on GPIO3 (2x100k divider), light/deep sleep with wake on GPIO 0-5, pet reacts to Spotify, gesture tricks, OTA with two ~1.69 MB slots, safe mode (hold B at boot), Wi-Fi setup portal, validating TLS certificates for the Spotify host instead of `setInsecure()`.

@@ -1,10 +1,10 @@
 # Pocketpet.esp32c3
 
-> **PROJECT PAUSED (2026-10-30).** Salman has put this on hold. Nothing is broken; it is just not being
-> worked on right now. The firmware on `main` is the last state, a lot of it (Online, Spotify, Lyrics visual,
-> games) was never fully tested on the device, and the custom PCB is designed but not finished or ordered.
-> See `HANDOFF.md` ("Project paused") and `pcb/README.md` for where things stand and how to resume.
-> Do not start new features unless Salman asks.
+> **Status (2026-11-14): active again, in small steps.** The project was paused on 2026-10-30 and picked back up
+> for the games/menu revamp (11-12) and a repo review (11-14). A lot of the firmware on `main` (Online, Spotify,
+> Lyrics visual, games, launcher) is still **not fully tested on the device**, and the custom PCB is designed but
+> not finished or ordered (`PCB/` holds the KiCad project only). See `HANDOFF.md` for the details.
+> Do not start big new features unless Salman asks.
 
 Keychain-sized digital pet gadget built around an ESP32-C3 Super Mini with a 1.3" SH1106 OLED, MPU6050 motion sensor, touch input and three buttons.
 
@@ -16,9 +16,9 @@ Keychain-sized digital pet gadget built around an ESP32-C3 Super Mini with a 1.3
 |------|-----|---------------|-------|
 | OLED SH1106 + MPU6050 | SDA | **8** | Shared hardware I2C, 400 kHz |
 | OLED SH1106 + MPU6050 | SCL | **9** | Shared hardware I2C, 400 kHz |
-| Button A | one leg to GND | **0** | Up / previous / tickle |
+| Button A | one leg to GND | **2** | Up / previous / tickle |
 | Button B | one leg to GND | **1** | Select / back |
-| Button C | one leg to GND | **2** | Down / next / boop |
+| Button C | one leg to GND | **0** | Down / next / boop |
 | Touch pad | OUT | **4** | TTP223-style, HIGH when touched (the pin next to 3V3) |
 
 Wire the MPU6050 SDA/SCL to the same GPIO 8 / 9 pins as the OLED.
@@ -108,12 +108,13 @@ Particle water simulation that follows tilt. Hold the device like a phone, it ca
 - Any touch, button press or movement wakes it up.
 
 ### Stats
-Happiness and energy are saved to flash (about every 2 minutes when they changed, and when leaving Pet mode), so the pet remembers across reboots. The Stats screen shows both bars and a lifetime pet count.
+Happiness and energy are saved to flash (about every 2 minutes when they changed, and when leaving Pet mode), so the pet remembers across reboots. The Stats screen shows both bars and a lifetime pet count. **A or C flips it to a System page** with the numbers that matter for debugging: FPS (frames sent to the OLED, capped at 25), how often `loop()` runs, free heap, lowest free heap since boot, the largest free block (the real limit for a TLS connection), app size, uptime and why the chip last restarted. Open it before and after using Online or Spotify to see how much heap they eat.
 
 ### Other
 - Button debouncing with press events.
 - MPU6050 and OLED are re-checked every 2 seconds and recover if they drop out.
-- Serial diagnostics once a second (buttons, touch, OLED, MPU, happy, energy, pets).
+- Serial diagnostics once a second (buttons, touch, OLED, MPU, happy, energy, pets, fps, free / min heap and largest free block in KB).
+- GitHub Actions (`.github/workflows/build.yml`) builds the firmware with PlatformIO on every push and shows the RAM / flash usage in the run summary.
 
 ## Build
 
@@ -148,13 +149,16 @@ When changing wiring, update `src/config.h` first.
 - [x] Repo + starter project
 - [x] OLED confirmed working (SH1106, GPIO 8/9)
 - [x] Touch pad soldered on, signal on GPIO4
-- [x] I2C roles swapped: OLED on hardware I2C, MPU6050 on SoftWire
+- [x] I2C roles swapped: OLED on hardware I2C, MPU6050 on SoftWire (superseded 2026-11-09: both now share the hardware bus on GPIO 8/9)
 - [x] Improved pet mode: moods, eased eyes, touch petting, motion reactions, sleep, hearts, Zzz
 - [x] Stats screen with flash-saved happiness and energy
 - [x] Verify current firmware on hardware
 - [ ] Try the RoboEyes library for the eyes (optional, only if the current look is not liked)
 - [x] Temperature mode
-- [x] Game mode (Magic 8-ball + Dice)\n- [x] Games (Star Blaster, Sniper, Road Rush, Pinball, generated Tilt Maze, tilt Snake)\n- [x] Touch pad (Pet mode only)\n- [x] Optional Wi-Fi NTP clock (credentials must be configured locally in ignored `src/secrets.h`)
+- [x] Game mode (Magic 8-ball + Dice)
+- [x] Games (Star Blaster, Sniper, Road Rush, Pinball, generated Tilt Maze, tilt Snake)
+- [x] Touch pad (Pet mode only)
+- [x] Optional Wi-Fi NTP clock (credentials must be configured locally in ignored `src/secrets.h`)
 - [x] Wi-Fi NTP clock
 - [x] Online mode: weather, forecast, AQI, currency, world clocks, fact, advice, moon, net status, ISS, GitHub (in code, host-checked, not yet tested on the device)
 - [ ] Pet sleeps at night

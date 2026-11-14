@@ -1,0 +1,60 @@
+name: build
+
+# Builds the real firmware for the ESP32-C3 with PlatformIO on every push / PR, so a compile error shows up
+# before anyone flashes. The run summary shows the RAM / flash usage. The host syntax check runs too.
+on:
+  push:
+  pull_request:
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      # src/secrets.h is gitignored (real credentials never live in the repo); the example file is enough to compile.
+      - name: Use the example secrets
+        run: cp src/secrets.example.h src/secrets.h
+
+      - name: Build
+        shell: bash
+        run: pio run 2>&1 | tee build.log
+
+      - name: RAM / flash summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '### Firmware size'
+            echo '```'
+            grep -E '^(RAM|Flash):' -A 1 build.log || echo 'no size lines (build failed?)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the firmware binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-esp32-c3-supermini
+          path: .pio/build/esp32-c3-supermini/firmware.bin
+          if-no-files-found: warn
+
+  hostcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host syntax check
+        run: bash tools/hostcheck/check.sh

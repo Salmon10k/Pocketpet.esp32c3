@@ -1081,20 +1081,44 @@ const char *resetReasonText() {
   }
 }
 
+// Debug counters, updated once a second from loop(). FPS = frames actually sent to the OLED (capped by FRAME_MS),
+// loop Hz = how often loop() runs (the main loop yields with delay(1), so a few hundred is normal).
+uint32_t dbgFrames = 0, dbgLoops = 0, dbgAt = 0;
+uint16_t dbgFps = 0, dbgLoopHz = 0;
+int statsPage = 0;                       // 0 = pet stats, 1 = system numbers (A or C flips the page)
+
 void drawStats() {
   char line[32];
   display.setFont(u8g2_font_7x13B_tf);
-  display.drawStr(0, 12, "STATS");
-  display.drawHLine(0, 15, 128);
-  drawBar(22, "Happy", pet.happy);
-  drawBar(36, "Energy", pet.energy);
-  display.setFont(u8g2_font_6x10_tf);
-  snprintf(line, sizeof(line), "Pets: %lu", (unsigned long)pet.pets);
-  display.drawStr(0, 60, line);
-  char rr[24];
-  snprintf(rr, sizeof(rr), "boot: %s", resetReasonText());
+  display.drawStr(0, 12, statsPage == 0 ? "STATS" : "SYSTEM");
   display.setFont(u8g2_font_5x7_tf);
-  display.drawStr(128 - display.getStrWidth(rr), 60, rr);
+  const char *hint = statsPage == 0 ? "A/C: system" : "A/C: pet";
+  display.drawStr(128 - display.getStrWidth(hint), 10, hint);
+  display.drawHLine(0, 15, 128);
+
+  if (statsPage == 0) {
+    drawBar(22, "Happy", pet.happy);
+    drawBar(36, "Energy", pet.energy);
+    display.setFont(u8g2_font_6x10_tf);
+    snprintf(line, sizeof(line), "Pets: %lu", (unsigned long)pet.pets);
+    display.drawStr(0, 60, line);
+    char rr[24];
+    snprintf(rr, sizeof(rr), "boot: %s", resetReasonText());
+    display.setFont(u8g2_font_5x7_tf);
+    display.drawStr(128 - display.getStrWidth(rr), 60, rr);
+    return;
+  }
+
+  // System page: the numbers that decide whether a feature fits (heap) and how smooth it runs (FPS).
+  display.setFont(u8g2_font_6x10_tf);
+  snprintf(line, sizeof(line), "FPS %u  loop %u/s", (unsigned)dbgFps, (unsigned)dbgLoopHz);
+  display.drawStr(0, 27, line);
+  snprintf(line, sizeof(line), "heap %luK min %luK", (unsigned long)(ESP.getFreeHeap() / 1024), (unsigned long)(ESP.getMinFreeHeap() / 1024));
+  display.drawStr(0, 38, line);
+  snprintf(line, sizeof(line), "block %luK  up %lum", (unsigned long)(ESP.getMaxAllocHeap() / 1024), (unsigned long)(millis() / 60000UL));
+  display.drawStr(0, 49, line);
+  snprintf(line, sizeof(line), "app %luK  %s", (unsigned long)(ESP.getSketchSize() / 1024), resetReasonText());
+  display.drawStr(0, 60, line);
 }
 
 bool resetArmed = false;
@@ -1239,6 +1263,7 @@ void enterMode(Mode m) {
   if (mode == MODE_LYRICS_VISUAL && m != MODE_LYRICS_VISUAL) lyrics_visual::leave();
   if (mode == MODE_LIVING_OLED && m != MODE_LIVING_OLED) living_oled::leave();
   mode = m;
+  if (m == MODE_STATS) statsPage = 0;
 
   if (m == MODE_PET) {
     uint32_t now = millis();
@@ -1334,6 +1359,14 @@ void loop() {
   float dt = (now - lastLoop) / 1000.0f;
   if (dt > 0.1f) dt = 0.1f;
   lastLoop = now;
+
+  dbgLoops++;
+  if (now - dbgAt >= 1000) {                       // once a second: publish FPS / loop rate for the Stats > System page
+    dbgAt = now;
+    dbgFps = (uint16_t)dbgFrames;
+    dbgLoopHz = (uint16_t)dbgLoops;
+    dbgFrames = dbgLoops = 0;
+  }
 
   updateButton(btnA);
   updateButton(btnB);
@@ -1469,7 +1502,7 @@ void loop() {
     if (now - lastStatus >= 1000) {
       lastStatus = now;
       Serial.printf(
-        "btnA=%d btnB=%d btnC=%d touch=%d oled=%d mpu=%d happy=%d energy=%d pets=%lu\n",
+        "btnA=%d btnB=%d btnC=%d touch=%d oled=%d mpu=%d happy=%d energy=%d pets=%lu fps=%u heapK=%lu minK=%lu blockK=%lu\n",
         digitalRead(PIN_BTN_A),
         digitalRead(PIN_BTN_B),
         digitalRead(PIN_BTN_C),
@@ -1478,7 +1511,11 @@ void loop() {
         mpuOk,
         (int)pet.happy,
         (int)pet.energy,
-        (unsigned long)pet.pets
+        (unsigned long)pet.pets,
+        (unsigned)dbgFps,
+        (unsigned long)(ESP.getFreeHeap() / 1024),
+        (unsigned long)(ESP.getMinFreeHeap() / 1024),
+        (unsigned long)(ESP.getMaxAllocHeap() / 1024)
       );
     }
   }
@@ -1618,6 +1655,9 @@ void loop() {
       fluid::setPreset(fluidPreset);
       fluidLabelUntil = millis() + 1500;
     }
+  } else if (mode == MODE_STATS) {
+    if (b) enterMode(MODE_MENU);
+    else if (a || c) statsPage ^= 1;                     // pet stats <-> system numbers
   } else if (b) {
     enterMode(MODE_MENU);
   }
@@ -1668,6 +1708,7 @@ void loop() {
     }
 
     display.sendBuffer();
+    dbgFrames++;
   }
   delay(1);   // yield the CPU: loop() used to spin flat out and starved the Spotify network task (same priority)
 }
