@@ -7,6 +7,17 @@
 
 Keychain-sized digital pet gadget built around an ESP32-C3 Super Mini with a 1.3" SH1106 OLED, MPU6050 motion sensor, touch input and three buttons.
 
+## Build gallery
+
+The project over time, from first prototype to the final PCB.
+
+| | |
+|---|---|
+| ![Breadboard prototype](docs/images/proto1-breadboard.jpg) | ![Vero board prototype, front](docs/images/proto2-vero-front.jpg) |
+| **1. Breadboard prototype.** ESP32-C3 Super Mini, OLED, MPU6050 and three buttons on jumper wires. | **2. Vero board, front.** Everything soldered to one board: OLED on top, MPU6050 in the middle, ESP32-C3 at the bottom, three buttons. |
+| ![Vero board power section](docs/images/proto2-vero-back.jpg) | ![PCB layout in KiCad](docs/images/pcb-layout.png) |
+| **3. Vero board, back.** Rocker switch, TP4056 charger and the 800 mAh battery. | **4. The final custom PCB** (KiCad layout, ghost-shaped outline), ordered 2026-11-15. |
+
 ## Current hardware wiring
 
 **Important:** the OLED and MPU6050 share **one hardware I2C bus (`Wire`)** on GPIO 8 (SDA) and GPIO 9 (SCL), 400 kHz. They have different addresses (OLED `0x3C`, MPU6050 `0x68`), so they coexist on the same two wires. (Until 2026-11-09 the MPU6050 was on its own software I2C bus on GPIO 5/6; that is gone and GPIO 5/6 are free.)
