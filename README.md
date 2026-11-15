@@ -1,10 +1,9 @@
 # Pocketpet.esp32c3
 
-> **Status (2026-11-15): active, in small steps.** The project was paused on 2026-10-30 and picked back up on
-> 11-12. Everything on `main` (pet music reactions, games, launcher, Online, Spotify, Lyrics visual) builds in CI and
-> passes the PC tests, but **most of it has not been flashed and tried on the device yet**. The custom PCB is designed
-> but not finished or ordered (`PCB/` holds the KiCad project only). See `HANDOFF.md` for the details and the
-> "check on the device" lists. Do not start big new features unless Salman asks.
+> **Status (2026-11-15): firmware verified on the device, PCB ordered.** Salman flashed and tested the current
+> `main` (pet music reactions, games, launcher, Online, Spotify, Lyrics visual) and confirmed it all works. The custom
+> PCB is finalised and ordered (`PCB/` holds the KiCad project). See `HANDOFF.md` for details.
+> Do not start big new features unless Salman asks.
 
 Keychain-sized digital pet gadget built around an ESP32-C3 Super Mini with a 1.3" SH1106 OLED, MPU6050 motion sensor, touch input and three buttons.
 
@@ -154,7 +153,7 @@ Happiness and energy are saved to flash (about every 2 minutes when they changed
 - `tools/hostcheck/` -> compiles all firmware sources on a PC against mock Arduino headers (a syntax check, no ESP32 needed)
 - `tools/gamepreview/` -> renders menus and games to PNG sheets on the PC, scripted "AI players", random-input fuzz test
 - `tools/petpreview/`, `tools/vibetest/`, `tools/fluidtest/` -> the pet's music reactions, the genre/vibe logic and the fluid, tested on the PC
-- `PCB/` -> KiCad project for the custom board (not finished)
+- `PCB/` -> KiCad project for the custom board (finalised and ordered 2026-11-15)
 - `src/config.h` -> all GPIO assignments, I2C addresses and pet tuning
 - `platformio.ini` -> PlatformIO build configuration
 - `partitions.csv` -> flash layout (one 3 MB app slot)
@@ -176,17 +175,18 @@ When changing wiring, update `src/config.h` first.
 - [x] OLED and MPU6050 share the hardware I2C bus on GPIO 8/9 (the earlier SoftWire split was removed on 2026-11-09)
 - [x] Improved pet mode: moods, eased eyes, touch petting, motion reactions, sleep, hearts, Zzz
 - [x] Stats screen with flash-saved happiness and energy
-- [x] Verify the first pet firmware on hardware (later features are still unverified)
+- [x] Verify the firmware on hardware (everything up to 2026-11-15)
 - [ ] Try the RoboEyes library for the eyes (optional, only if the current look is not liked)
 - [x] Temperature mode
 - [x] Game mode (Magic 8-ball + Dice)
-- [x] Games: Star Blaster, Sniper, Road Rush, Pinball, Breakout, Asteroids, Stack, Quick Draw, generated Tilt Maze, tilt Snake (in code, PC-tested, not yet tried on the device)
+- [x] Games: Star Blaster, Sniper, Road Rush, Pinball, Breakout, Asteroids, Stack, Quick Draw, generated Tilt Maze, tilt Snake (verified on the device 2026-11-15)
 - [x] Touch pad (Pet mode only)
 - [x] Optional Wi-Fi NTP clock (credentials must be configured locally in ignored `src/secrets.h`)
 - [x] Wi-Fi NTP clock
-- [x] Online mode: weather, forecast, AQI, currency, world clocks, fact, advice, moon, net status, ISS, GitHub (in code, host-checked, not yet tested on the device)
+- [x] Online mode: weather, forecast, AQI, currency, world clocks, fact, advice, moon, net status, ISS, GitHub (verified on the device)
 - [x] Pet reacts to Spotify music, different reactions per genre (in code, PC-tested, not yet on the device)
-- [x] Launcher / sub-menus, Lyrics visual, Living OLED (in code, not yet fully tested on the device)
+- [x] Launcher / sub-menus, Lyrics visual, Living OLED (verified on the device 2026-11-15)
+- [x] Custom PCB finalised and ordered
 - [ ] Pet sleeps at night
 - [ ] Battery monitoring (GPIO3 divider)
 - [ ] Deep sleep / wake on touch
