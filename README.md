@@ -160,14 +160,6 @@ Happiness and energy are saved to flash (about every 2 minutes when they changed
 
 When changing wiring, update `src/config.h` first.
 
-## First-flash checklist
-- [ ] Builds and uploads
-- [ ] OLED shows the menu (serial boot log says "OLED found")
-- [ ] Serial shows `mpu=1`
-- [ ] `touch=` flips to 1 when the pad is touched
-- [ ] Eyes follow tilt the right way (if not, flip `TILT_X_SIGN` / `TILT_Y_SIGN` in `config.h`)
-- [ ] Shake gives dizzy eyes, sharp pickup gives surprised eyes
-
 ## Status
 - [x] Repo + starter project
 - [x] OLED confirmed working (SH1106, GPIO 8/9)
