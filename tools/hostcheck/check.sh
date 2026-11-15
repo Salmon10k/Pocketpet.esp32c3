@@ -15,7 +15,7 @@ clone bblanchon/ArduinoJson ArduinoJson
 rc=0
 for f in "$ROOT"/src/*.cpp; do
   echo "== $(basename "$f")"
-  g++ -std=gnu++17 -fsyntax-only -Wall -Wextra -Wno-unused-parameter \
+  g++ -std=gnu++17 -fsyntax-only -Wall -Wextra -Wno-unused-parameter ${EXTRA_FLAGS:-} \
     -I "$ROOT/src" -I "$HERE" \
     -I "$LIBS/u8g2/cppsrc" -I "$LIBS/u8g2/csrc" \
     -I "$LIBS/ArduinoJson/src" \

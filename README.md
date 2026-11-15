@@ -20,6 +20,8 @@ The project over time, from first prototype to the final PCB.
 
 ## Current hardware wiring
 
+> **Custom PCB v1:** its button pins differ from the table below and it needs a few bodge wires. Flash it with the PlatformIO environment `esp32-c3-pcb`. All details and the fixes are in [`docs/pcb-v1-notes.md`](docs/pcb-v1-notes.md).
+
 **Important:** the OLED and MPU6050 share **one hardware I2C bus (`Wire`)** on GPIO 8 (SDA) and GPIO 9 (SCL), 400 kHz. They have different addresses (OLED `0x3C`, MPU6050 `0x68`), so they coexist on the same two wires. (Until 2026-11-09 the MPU6050 was on its own software I2C bus on GPIO 5/6; that is gone and GPIO 5/6 are free.)
 
 | Part | Pin | ESP32-C3 GPIO | Notes |
@@ -147,7 +149,7 @@ Happiness and energy are saved to flash (about every 2 minutes when they changed
 3. Plug the ESP32-C3 Super Mini in with a data-capable USB cable.
 4. Build and upload with PlatformIO.
 5. Board environment: `esp32-c3-supermini`.
-6. USB CDC on boot is enabled in `platformio.ini`.
+6. USB CDC on boot is enabled in `platformio.ini`. Use environment `esp32-c3-supermini` for the protoboard build and `esp32-c3-pcb` for the custom PCB.
 7. `partitions.csv` gives the app a 3 MB slot (no OTA) because Wi-Fi + TLS made the firmware too big for the default 1.3 MB slot.
 
 ## Files

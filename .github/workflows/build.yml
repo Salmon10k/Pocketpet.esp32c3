@@ -59,6 +59,9 @@ jobs:
       - name: Host syntax check
         run: bash tools/hostcheck/check.sh
 
+      - name: Host syntax check (custom PCB pins)
+        run: EXTRA_FLAGS="-DHW_PCB_V1=1" bash tools/hostcheck/check.sh
+
       # Genre / vibe classification, tempo and energy (pure C++).
       - name: Vibe tests
         run: bash tools/vibetest/run.sh
