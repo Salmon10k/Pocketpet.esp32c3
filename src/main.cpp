@@ -209,7 +209,7 @@ void applyScreen() {
   display.setFlipMode(setFlip ? 1 : 0);
 }
 
-const char *const BEST_KEYS[games::COUNT] = {"bestStar", "bestSnip", "bestRoad", "bestPin"};   // best scores of the new games
+const char *const BEST_KEYS[games::COUNT] = {"bestStar", "bestSnip", "bestRoad", "bestPin", "bestBrk", "bestAst", "bestStk", "bestDue"};   // best scores of the new games
 
 void loadSettings() {
   setBright = constrain(prefs.getUChar("bright", 2), 0, 3);
@@ -522,8 +522,9 @@ const launcher::Item toolsMenu[] = {
 const int TOOLS_COUNT = 4;
 const launcher::Item gamesMenu[] = {
   {"Star Blaster", launcher::ICON_STAR}, {"Sniper", launcher::ICON_SNIPER}, {"Road Rush", launcher::ICON_ROAD}, {"Pinball", launcher::ICON_PINBALL},
+  {"Breakout", launcher::ICON_BREAKOUT}, {"Asteroids", launcher::ICON_ASTEROID}, {"Stack", launcher::ICON_STACK}, {"Quick Draw", launcher::ICON_DUEL},
   {"Tilt Maze", launcher::ICON_MAZE}, {"Snake", launcher::ICON_SNAKE}, {"Back", launcher::ICON_BACK}};
-const int GAMES_COUNT = 7;
+const int GAMES_COUNT = games::COUNT + 3;           // the games, Tilt Maze, Snake, Back
 games::Id curGame = games::STAR;
 
 int menuIndex = 0;
@@ -1502,8 +1503,8 @@ void loop() {
     } else if (pick >= 0 && mode == MODE_GAMES) {
       submenuIndex = pick;
       if (pick < games::COUNT) { curGame = (games::Id)pick; enterMode(MODE_GAME); }
-      else if (pick == 4) enterMode(MODE_TILT_MAZE);
-      else if (pick == 5) enterMode(MODE_SNAKE);
+      else if (pick == games::COUNT) enterMode(MODE_TILT_MAZE);
+      else if (pick == games::COUNT + 1) enterMode(MODE_SNAKE);
       else enterMode(MODE_MENU);
     } else if (pick >= 0 && mode == MODE_SETTINGS) {
       if (pick == 0) { setBright = (setBright + 1) % 4; applyScreen(); saveSettings(); }

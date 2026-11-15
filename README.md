@@ -47,9 +47,13 @@ Built for the three buttons and the MPU6050. Best scores are saved.
 | Game | Controls |
 |------|----------|
 | **Star Blaster** (side-scrolling shooter: drones, gunships, splitting rocks, power-ups) | tilt flies the ship, **A** shoots (hold = rapid fire), **C** = smart bomb |
-| **Sniper** (night city, scope with sway; enemies pop up in windows, survive 3 misses) | tilt swings the scope, **A** fires (bolt action), hold **C** to steady your breath and zoom 2x |
-| **Road Rush** (pseudo-3D racer, beat the clock, checkpoints add time) | tilt steers (bends push you outwards), **A** nitro, **C** brake |
+| **Sniper** (night city, scope with sway; enemies pop up in big windows, 2.4 s+ to find and shoot them, survive 3 misses; a ring blip shows where off-screen targets are) | tilt swings the scope, **A** fires (bolt action), hold **C** to steady your breath and zoom 2x |
+| **Road Rush** (pseudo-3D racer, beat the clock, checkpoints add time; traffic = hollow sedans and tall trucks, your car is solid) | tilt steers (quick, full lock at about a 0.5 tilt; bends push you outwards), **A** nitro, **C** brake |
 | **Pinball** (the table lies on its side, flippers on the right edge) | **A** upper flipper, **C** lower flipper, shake the keychain to nudge the ball (nudge too much = TILT) |
+| **Breakout** (8x5 bricks, top rows take two hits, levels get faster and gappier) | tilt slides the paddle, **A** or **C** launches |
+| **Asteroids** (screen wraps, rocks split) | tilt turns the ship, hold **A** thrust, hold **C** fire |
+| **Stack** (drop the sliding block, only the overlap stays, 3 perfect drops in a row grow it back) | **A** or **C** drops (no tilt needed) |
+| **Quick Draw** (wait for DRAW!, beat the outlaw, he gets faster every win; too early loses) | **A** or **C** (no tilt needed) |
 | **Tilt Maze** | tilt, **A** re-zero, **C** new maze |
 | **Snake** | tilt to steer (or **A** left / **C** right) |
 

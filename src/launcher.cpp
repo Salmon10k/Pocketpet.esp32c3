@@ -533,6 +533,39 @@ void drawIcon(U8G2 &d, int app, int cx, int cy, int r, uint32_t t) {
       line(d, X(-5), Y(2), X(5) , Y(-2) + rr + 1);
       break;
     }
+    case ICON_BREAKOUT: {                                               // bricks, a ball and a paddle
+      for (int k = 0; k < 3; k++) { box(d, X(-9 + k * 6), Y(-9), S(5), S(3)); if (k != 1) frame(d, X(-9 + k * 6), Y(-4), S(5), S(3)); }
+      int bx0 = t ? sn(ph * 2) * S(4) / 127 : 0;
+      disc(d, X(0) + bx0, Y(2), imax(1, S(1)));
+      box(d, X(-5) + bx0 / 2, Y(8), S(10), imax(1, S(2)));
+      break;
+    }
+    case ICON_ASTEROID: {                                               // a rock and a small ship
+      int rot = t ? ph : 0, rr = imax(3, S(6));
+      int px0 = 0, py0 = 0;
+      for (int k = 0; k <= 7; k++) {
+        int a = (k % 7) * 256 / 7 + rot, q = rr - ((k * 5) % 3) * imax(1, S(1));
+        int x = X(-3) + cs(a) * q / 127, y = Y(-3) + sn(a) * q / 127;
+        if (k) line(d, px0, py0, x, y);
+        px0 = x; py0 = y;
+      }
+      line(d, X(2), Y(9), X(5), Y(3)); line(d, X(5), Y(3), X(8), Y(9)); line(d, X(3), Y(7), X(7), Y(7));
+      break;
+    }
+    case ICON_STACK: {                                                  // a wobbling tower of blocks
+      int w0 = t ? sn(ph * 2) * S(2) / 127 : 0;
+      box(d, X(-7), Y(6), S(14), S(3));
+      frame(d, X(-6), Y(2), S(12) + 1, S(3));
+      box(d, X(-5) + w0, Y(-2), S(10), S(3));
+      frame(d, X(-3) + w0, Y(-6), S(7), S(3));
+      break;
+    }
+    case ICON_DUEL: {                                                   // a cowboy hat over a revolver
+      hl(d, X(-9), Y(-3), S(18)); box(d, X(-4), Y(-8), S(8), S(5));
+      hl(d, X(-3), Y(0), S(9)); box(d, X(-3), Y(0), S(3), S(5)); hl(d, X(-3), Y(0), S(10)); hl(d, X(-3), Y(2), S(10));
+      if (!t || ((ph / 14) & 1)) { px(d, X(9), Y(-1)); px(d, X(10), Y(0)); }
+      break;
+    }
     default: frame(d, X(-8), Y(-8), S(16) + 1, S(16) + 1); break;
   }
 }

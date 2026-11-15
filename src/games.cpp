@@ -7,7 +7,7 @@
 using namespace gfx;
 
 namespace games {
-uint32_t best[COUNT] = {0, 0, 0, 0};
+uint32_t best[COUNT] = {};
 
 namespace {
 const float DT = 0.02f;                 // every game runs on a fixed 20 ms physics step
@@ -15,6 +15,7 @@ bool bestDirty = false;
 Id cur = STAR;
 Input in = {};
 uint32_t lastStepAt = 0;
+bool usesTilt(Id g) { return g != PINBALL && g != STACK && g != DUEL; }   // these three play without the MPU6050
 
 inline int imin(int a, int b) { return a < b ? a : b; }
 inline int imax(int a, int b) { return a > b ? a : b; }
@@ -302,16 +303,18 @@ uint32_t score;
 bool over, isBest, gasp;
 char popText[12];
 
-void winPos(int b, int c, int r, float &x, float &y) { x = bl[b].x + 4 + c * 9; y = bl[b].top + 6 + r * 12; }
+// Windows are 9 x 12 world px, 12 / 14 apart (bigger than the first version: the small windows were too hard to find).
+void winPos(int b, int c, int r, float &x, float &y) { x = bl[b].x + 4 + c * 12; y = bl[b].top + 5 + r * 14; }
+void headPos(int b, int c, int r, float &x, float &y) { winPos(b, c, r, x, y); x += 4.5f; y += 4.0f; }
 
 void reset() {
   nb = 0;
   int x = -6;
   while (x < W && nb < MAXB) {
     Bld &b = bl[nb++];
-    b.w = (int16_t)random(26, 50); b.x = (int16_t)x; b.top = (int16_t)random(14, 40);
-    b.cols = (uint8_t)imin(5, (b.w - 4) / 9);
-    b.rows = (uint8_t)imin(6, (GROUND - b.top - 8) / 12);
+    b.w = (int16_t)random(34, 58); b.x = (int16_t)x; b.top = (int16_t)random(14, 36);
+    b.cols = (uint8_t)imin(4, (b.w - 4) / 12);
+    b.rows = (uint8_t)imin(5, (GROUND - b.top - 8) / 14);
     x += b.w + random(0, 4);
   }
   memset(tg, 0, sizeof(tg));
@@ -324,15 +327,18 @@ void pop(const char *t) { snprintf(popText, sizeof(popText), "%s", t); popT = 0.
 
 void spawnTarget() {
   for (auto &t : tg) if (!t.on) {
-    for (int tries = 0; tries < 10; ++tries) {
+    for (int tries = 0; tries < 16; ++tries) {
       int b = random(0, nb);
       if (bl[b].cols == 0 || bl[b].rows == 0) continue;
       int c = random(0, bl[b].cols), r = random(0, bl[b].rows);
+      float wx, wy;
+      winPos(b, c, r, wx, wy);
+      if (tries < 10 && fabsf(wx - camX) > 85) continue;               // mostly pop up close to where you are looking
       bool used = false;
       for (auto &o : tg) if (o.on && o.b == b && o.c == c && o.r == r) used = true;
       if (used) continue;
       t.on = true; t.b = (uint8_t)b; t.c = (uint8_t)c; t.r = (uint8_t)r;
-      t.life = clampf(2.8f - 0.06f * kills, 1.1f, 2.8f);
+      t.life = clampf(4.6f - 0.07f * kills, 2.4f, 4.6f) + fabsf(wx - camX) / 110.0f;   // far away = a little more time to find him
       return;
     }
     return;
@@ -347,9 +353,9 @@ void fire() {
   for (auto &t : tg) if (t.on) {
     float wx, wy;
     winPos(t.b, t.c, t.r, wx, wy);
-    float hx = cxw - (wx + 3.5f), hy = cyw - (wy + 3.2f);
-    bool head = hx * hx + hy * hy < 2.7f * 2.7f;
-    bool body = cxw >= wx + 0.3f && cxw <= wx + 6.7f && cyw >= wy + 5.0f && cyw <= wy + 10.0f;
+    float hx = cxw - (wx + 4.5f), hy = cyw - (wy + 4.0f);
+    bool head = hx * hx + hy * hy < 3.6f * 3.6f;
+    bool body = cxw >= wx + 0.0f && cxw <= wx + 9.0f && cyw >= wy + 6.5f && cyw <= wy + 12.0f;
     if (head || body) {
       t.on = false; ++kills;
       score += head ? 3 : 1;
@@ -378,8 +384,8 @@ void step() {
   swx = amp * (1.7f * sinf(tsec * 1.9f) + 0.7f * sinf(tsec * 5.3f));
   swy = amp * (1.5f * cosf(tsec * 1.4f) + 0.6f * sinf(tsec * 3.7f));
 
-  camX = clampf(camX + dz(in.tx, 0.05f) * 230.0f / zoom * DT, 4, W - 4);     // tilt = how fast the scope swings
-  camY = clampf(camY + dz(in.ty, 0.05f) * 150.0f / zoom * DT, 31, 45);
+  camX = clampf(camX + dz(in.tx, 0.05f) * 300.0f / zoom * DT, 4, W - 4);     // tilt = how fast the scope swings
+  camY = clampf(camY + dz(in.ty, 0.05f) * 170.0f / zoom * DT, 20, 58);     // was 31..45: windows on low floors could not be aimed at
 
   int active = 0;
   for (auto &t : tg) if (t.on) ++active;
@@ -413,12 +419,12 @@ void draw(U8G2 &d, uint32_t now) {
     for (int r = 0; r < b.rows; ++r) {                                                          // floor ledges
       float lx, ly;
       winPos(i, 0, r, lx, ly);
-      hl(d, x0, SY(ly + 11), x1 - x0);
+      hl(d, x0, SY(ly + 13), x1 - x0);
     }
     for (int c = 0; c < b.cols; ++c) for (int r = 0; r < b.rows; ++r) {
       float wx, wy;
       winPos(i, c, r, wx, wy);
-      int sx0 = SX(wx), sy0 = SY(wy), ww = (int)(7 * Z), wh = (int)(10 * Z);
+      int sx0 = SX(wx), sy0 = SY(wy), ww = (int)(9 * Z), wh = (int)(12 * Z);
       if (sx0 > 127 || sx0 + ww < 0 || sy0 > 63 || sy0 + wh < 0) continue;
       d.setDrawColor(0); box(d, sx0, sy0, ww, wh);
       d.setDrawColor(1); frame(d, sx0, sy0, ww, wh);
@@ -428,11 +434,11 @@ void draw(U8G2 &d, uint32_t now) {
   for (auto &t : tg) if (t.on) {                                    // enemy bust in his window
     float wx, wy;
     winPos(t.b, t.c, t.r, wx, wy);
-    bool blink = t.life < 0.5f && ((now / 60) % 2);
+    bool blink = t.life < 0.7f && ((now / 60) % 2);
     if (blink) continue;
-    disc(d, SX(wx + 3.5f), SY(wy + 3.2f), imax(1, (int)(2.2f * Z)));
-    box(d, SX(wx + 0.5f), SY(wy + 5.5f), (int)(6 * Z), (int)(4.5f * Z));
-    line(d, SX(wx + 6), SY(wy + 7), SX(wx + 10), SY(wy + 5));
+    disc(d, SX(wx + 4.5f), SY(wy + 4.0f), imax(2, (int)(2.8f * Z)));
+    box(d, SX(wx + 1.0f), SY(wy + 7.0f), (int)(7 * Z), (int)(5 * Z));
+    line(d, SX(wx + 8), SY(wy + 8), SX(wx + 12), SY(wy + 6));
   }
   if (flashT > 0) { d.setDrawColor(2); d.drawBox(34, 2, 60, 60); d.setDrawColor(1); }
 
@@ -455,10 +461,10 @@ void draw(U8G2 &d, uint32_t now) {
   for (auto &t : tg) if (t.on) {                                    // blip on the ring for targets that are out of view
     float wx, wy;
     winPos(t.b, t.c, t.r, wx, wy);
-    float dx = (wx + 3.5f - cx) * Z, dy = (wy + 5.0f - cy) * Z;
+    float dx = (wx + 4.5f - cx) * Z, dy = (wy + 6.0f - cy) * Z;
     if (dx * dx + dy * dy < (R - 3) * (R - 3)) continue;
     float a = atan2f(dy, dx);
-    if ((now / 150) % 2) disc(d, 64 + (int)lroundf(cosf(a) * (R + 4)), 32 + (int)lroundf(sinf(a) * (R + 4)), 2);
+    if (t.life > 1.2f || (now / 100) % 2) disc(d, 64 + (int)lroundf(cosf(a) * (R + 4)), 32 + (int)lroundf(sinf(a) * (R + 4)), 2);
   }
 
   d.setFont(u8g2_font_5x7_tf);                                       // HUD in the black corners
@@ -486,7 +492,7 @@ const int H = 22;                 // horizon row
 const float ZM = 4.0f;            // metres per unit of depth
 const float HWP = 46.0f;          // road half width in pixels at the bottom row
 const float CK = 1.6e-3f;         // how strongly the track curvature bends the picture
-struct Car { float z, x, v; bool on; };
+struct Car { float z, x, v; uint8_t type; bool on; };      // type 0 sedan, 1 truck (slow, tall)
 Car cars[6];
 float dist, spd, ppx, nitro, timeLeft, invuln, shake, cpMsg, nextCp, carCd, tsec, bg;
 bool over, isBest, nitroOn;
@@ -507,7 +513,12 @@ void spawnCar() {
   int lane = random(0, 3);
   float z = dist + frand(110, 160);
   for (auto &c : cars) if (c.on && fabsf(c.x - (lane - 1) * 0.66f) < 0.1f && fabsf(c.z - z) < 35) return;
-  for (auto &c : cars) if (!c.on) { c.on = true; c.x = (lane - 1) * 0.66f; c.z = z; c.v = frand(14, 34); return; }
+  for (auto &c : cars) if (!c.on) {
+    c.on = true; c.x = (lane - 1) * 0.66f; c.z = z;
+    c.type = (uint8_t)(random(0, 4) == 0 ? 1 : 0);
+    c.v = c.type ? frand(10, 18) : frand(16, 34);
+    return;
+  }
 }
 
 void step() {
@@ -527,9 +538,9 @@ void step() {
   else spd = fmaxf(target, spd - (in.cHeld ? 1.1f : 0.45f) * DT);
   dist += spd * 75.0f * DT;
 
-  float steer = clampf(dz(in.tx, 0.04f), -0.5f, 0.5f);
+  float steer = clampf(dz(in.tx, 0.04f) * 1.8f, -0.8f, 0.8f);      // full steering at about a 0.48 tilt
   float cv = curveAt(dist);
-  ppx += steer * 3.0f * (0.35f + spd) * DT;
+  ppx += steer * 4.0f * (0.4f + spd) * DT;                         // about 2.5x quicker than the first version
   ppx -= cv * spd * spd * 0.95f * DT;                                // the bend throws you outwards
   ppx = clampf(ppx, -1.9f, 1.9f);
   bg += cv * spd * DT * 40.0f;
@@ -545,21 +556,46 @@ void step() {
     c.z += c.v * DT;
     float rel = c.z - dist;
     if (rel < -15) { c.on = false; continue; }
-    if (invuln <= 0 && rel > -1 && rel < 5 && fabsf(c.x - ppx) < 0.32f) {
+    if (invuln <= 0 && rel > -1 && rel < 5 && fabsf(c.x - ppx) < 0.34f) {
       spd *= 0.3f; timeLeft -= 2; invuln = 1.2f; shake = 0.5f; c.on = false;
     }
   }
 }
 
-void rearCar(U8G2 &d, int cx, int yb, int w, int h) {                // a car seen from behind, bottom centre at (cx, yb)
-  if (w < 3 || h < 2) { box(d, cx - 1, yb - 1, 2, 2); return; }
-  int x0 = cx - w / 2, bodyH = imax(1, h * 6 / 10), top = yb - h;
-  box(d, x0, yb - bodyH, w, bodyH);
-  box(d, x0 + w / 6, top, w - w / 3, h - bodyH + 1);
-  d.setDrawColor(0);
-  if (w >= 8 && h - bodyH > 2) box(d, x0 + w / 4, top + 1, w - w / 2, h - bodyH - 1);
-  if (w >= 6) { px(d, x0 + 1, yb - bodyH + 1); px(d, x0 + w - 2, yb - bodyH + 1); }
+// Traffic is drawn hollow (black body, white outline, two solid tail lights) so it never melts into a blob on the 1-bit
+// screen; trucks are tall boxes with a stripe. Our own car is solid white with a spoiler, so it is never confused with them.
+void traffic(U8G2 &d, int cx, int yb, int w, int h, int type) {
+  if (w < 4 || h < 3) { box(d, cx - 1, yb - 2, 3, 3); return; }
+  if (type) h = h * 14 / 10;
+  int x0 = cx - w / 2;
+  int bodyH = type ? h : imax(2, h * 6 / 10), top = yb - h;
+  d.setDrawColor(0); box(d, x0, yb - bodyH, w, bodyH + 1);
+  if (!type) box(d, x0 + w / 6, top, w - w / 3 + 1, h - bodyH + 1);
   d.setDrawColor(1);
+  frame(d, x0, yb - bodyH, w, bodyH + 1);
+  if (!type) {
+    hl(d, x0 + w / 6, top, w - w / 3 + 1);                               // roof
+    vl(d, x0 + w / 6, top, h - bodyH + 1); vl(d, x0 + w - w / 6, top, h - bodyH + 1);
+    if (w >= 12) hl(d, x0 + 2, yb - bodyH + bodyH / 2, w - 4);          // bumper line
+  } else if (w >= 8) {
+    vl(d, cx, yb - bodyH + 1, bodyH - 2);                                // cargo door seam
+    hl(d, x0, yb - bodyH + 2, w);
+  }
+  int lw = imax(2, w / 6);
+  box(d, x0 + 1, yb - imax(2, bodyH / 3), lw, imax(2, bodyH / 4));        // tail lights, solid
+  box(d, x0 + w - 1 - lw, yb - imax(2, bodyH / 3), lw, imax(2, bodyH / 4));
+}
+
+void playerCar(U8G2 &d, int cx, int yb) {
+  box(d, cx - 8, yb - 7, 17, 8);                                          // body
+  box(d, cx - 5, yb - 11, 11, 5);                                         // cabin
+  hl(d, cx - 9, yb - 11, 19); vl(d, cx - 9, yb - 11, 2); vl(d, cx + 9, yb - 11, 2);   // spoiler
+  d.setDrawColor(0);
+  box(d, cx - 4, yb - 10, 9, 3);                                          // rear window
+  hl(d, cx - 6, yb - 3, 13);                                              // bumper gap
+  px(d, cx - 6, yb - 6); px(d, cx + 6, yb - 6);
+  d.setDrawColor(1);
+  box(d, cx - 9, yb - 2, 3, 3); box(d, cx + 7, yb - 2, 3, 3);            // tyres
 }
 
 void draw(U8G2 &d, uint32_t now) {
@@ -616,11 +652,11 @@ void draw(U8G2 &d, uint32_t now) {
     if (y > 62) y = 62;
     if (y <= H + 1) continue;
     int cx = ctr[y] + (int)(cr.x * hwv[y]);
-    rearCar(d, cx, y, (int)(s * 18), (int)(s * 11));
+    traffic(d, cx, y, (int)(s * 31), (int)(s * 18), cr.type);   // big on purpose: the screen is tiny
   }
 
   int jx = shake > 0 ? random(-1, 2) : 0, jy = shake > 0 ? random(0, 2) : 0;   // our own car
-  if (invuln <= 0 || (now / 70) % 2) rearCar(d, 64 + jx, 62 + jy, 16, 11);
+  if (invuln <= 0 || (now / 70) % 2) playerCar(d, 64 + jx, 62 + jy);
   if (nitroOn) { vl(d, 60, 56, 2); vl(d, 68, 56, 2); }
   if (nitroOn || spd > 0.85f) { hl(d, 3, 30 + (int)(now / 40 % 12), 6); hl(d, 119, 36 + (int)(now / 50 % 14), 6); }
 
@@ -791,11 +827,420 @@ void launch() {
   state = PLAY; bvx = 170 + (float)random(-20, 21); bvy = (float)random(-70, 71);
 }
 }  // namespace pin
+
+// =====================================================================================================
+//  BREAKOUT: tilt slides the paddle (tilt 0.5 = edge to edge), A or C launches the ball. Top rows take two hits.
+// =====================================================================================================
+namespace brk {
+const int COLS = 8, ROWS = 5, BY0 = 12, BW = 16, BH = 6, PY = 59, PW = 22;
+uint8_t hp[ROWS][COLS];
+float padX, bx, by, bvx, bvy, speed, msgT;
+int lives, level, left;
+uint32_t score;
+enum State { SERVE, PLAY, OVER } state;
+bool isBest;
+char msg[12];
+
+void wall() {
+  left = 0;
+  int hard = imin(4, level);
+  for (int r = 0; r < ROWS; ++r) for (int c = 0; c < COLS; ++c) {
+    bool gap = level >= 3 && ((c + r * 3) % 5 == 0);
+    hp[r][c] = gap ? 0 : (uint8_t)(r < hard ? 2 : 1);
+    if (hp[r][c]) ++left;
+  }
+}
+
+void serve() {
+  state = SERVE;
+  bx = padX; by = PY - 2.5f; bvx = bvy = 0;
+  speed = clampf(62.0f + 8.0f * level, 62, 120);
+}
+
+void reset() {
+  level = 1; score = 0; lives = 3; isBest = false; msgT = 0; padX = 64; msg[0] = 0;
+  wall(); serve();
+}
+
+void launch() {
+  if (state != SERVE) return;
+  float a = frand(-0.45f, 0.45f);
+  bvx = speed * sinf(a); bvy = -speed * cosf(a);
+  state = PLAY;
+}
+
+bool hitBrick(float x, float y) {
+  int c = (int)floorf(x / BW), r = (int)floorf((y - BY0) / (float)BH);
+  if (c < 0 || c >= COLS || r < 0 || r >= ROWS || hp[r][c] == 0) return false;
+  --hp[r][c];
+  if (hp[r][c] == 0) { --left; score += 2; } else score += 1;
+  speed = fminf(125.0f, speed + 0.7f);
+  return true;
+}
+
+void step() {
+  if (msgT > 0) msgT -= DT;
+  float target = 64.0f + clampf(in.tx, -0.5f, 0.5f) * 2.0f * (64.0f - PW / 2 - 1);
+  padX += (target - padX) * 0.4f;
+  if (state == SERVE) { bx = padX; by = PY - 2.5f; return; }
+  if (state != PLAY) return;
+  for (int sub = 0; sub < 2; ++sub) {
+    float h = DT * 0.5f;
+    float nx = bx + bvx * h;
+    if (hitBrick(nx + (bvx > 0 ? 1.5f : -1.5f), by)) bvx = -bvx; else bx = nx;
+    float ny = by + bvy * h;
+    if (hitBrick(bx, ny + (bvy > 0 ? 1.5f : -1.5f))) bvy = -bvy; else by = ny;
+    if (bx < 1.5f) { bx = 1.5f; bvx = fabsf(bvx); }
+    if (bx > 126.5f) { bx = 126.5f; bvx = -fabsf(bvx); }
+    if (by < 10.5f) { by = 10.5f; bvy = fabsf(bvy); }
+    if (bvy > 0 && by + 1.5f >= PY && by < PY + 3 && fabsf(bx - padX) <= PW / 2 + 2) {
+      float ofs = clampf((bx - padX) / (PW / 2 + 1), -1, 1);
+      bvx = speed * sinf(ofs * 1.0f); bvy = -speed * cosf(ofs * 1.0f);
+      by = PY - 1.5f;
+    }
+  }
+  if (fabsf(bvy) < 22.0f) bvy = bvy < 0 ? -22.0f : 22.0f;
+  if (left <= 0) {
+    ++level; wall(); serve(); msgT = 1.4f;
+    snprintf(msg, sizeof(msg), "LEVEL %d", level);
+    return;
+  }
+  if (by > 66) {
+    if (--lives <= 0) { state = OVER; isBest = noteScore(score); } else serve();
+  }
+}
+
+void draw(U8G2 &d, uint32_t now) {
+  d.setFont(u8g2_font_5x7_tf);
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%lu", (unsigned long)score);
+  d.drawStr(0, 7, buf);
+  snprintf(buf, sizeof(buf), "L%d", level);
+  d.drawStr(64 - d.getStrWidth(buf) / 2, 7, buf);
+  for (int i = 0; i < lives; ++i) box(d, 122 - i * 7, 2, 5, 4);
+  hl(d, 0, 9, 128);
+  for (int r = 0; r < ROWS; ++r) for (int c = 0; c < COLS; ++c) {
+    if (!hp[r][c]) continue;
+    int x = c * BW + 1, y = BY0 + r * BH;
+    if (hp[r][c] >= 2) box(d, x, y, BW - 2, BH - 1);
+    else frame(d, x, y, BW - 2, BH - 1);
+  }
+  box(d, (int)lroundf(padX - PW / 2), PY, PW, 3);
+  box(d, (int)lroundf(bx) - 1, (int)lroundf(by) - 1, 3, 3);
+  if (state == SERVE && ((now / 400) % 2)) small(d, "A = launch", 64, 52);
+  if (msgT > 0) banner(d, msg, 40);
+  if (state == OVER) gameOver(d, score, isBest);
+}
+}  // namespace brk
+
+// =====================================================================================================
+//  ASTEROIDS: tilt left / right turns the ship, hold A = thrust, hold C = fire. The screen wraps around.
+// =====================================================================================================
+namespace ast {
+struct Rock { float x, y, vx, vy; uint8_t size, seed; bool on; };      // size 3 big, 2 medium, 1 small
+struct Shot { float x, y, vx, vy, life; bool on; };
+const float RAD[4] = {0, 3.0f, 5.5f, 9.0f};
+Rock rk[24];
+Shot sh[4];
+float sx, sy, svx, svy, ang, invuln, fireCd, waveCd, tsec;
+int lives, wave;
+uint32_t score;
+bool over, isBest, thrusting;
+
+const float TAU = 6.2831853f;
+
+void addRock(int size, float x, float y, float vx, float vy) {
+  for (auto &r : rk) if (!r.on) { r.on = true; r.size = (uint8_t)size; r.x = x; r.y = y; r.vx = vx; r.vy = vy; r.seed = (uint8_t)random(0, 256); return; }
+}
+
+void spawnWave() {
+  ++wave;
+  int n = imin(2 + wave, 5);
+  float sp = fminf(28.0f, 8.0f + 3.0f * wave);
+  for (int i = 0; i < n; ++i) {
+    float x, y;
+    if (random(0, 2)) { x = random(0, 2) ? 2 : 125; y = (float)random(0, 64); } else { y = random(0, 2) ? 2 : 61; x = (float)random(0, 128); }
+    float a = frand(0, TAU);
+    addRock(3, x, y, cosf(a) * sp * frand(0.6f, 1.2f), sinf(a) * sp * frand(0.6f, 1.2f));
+  }
+  waveCd = 1.2f;
+}
+
+void reset() {
+  memset(rk, 0, sizeof(rk)); memset(sh, 0, sizeof(sh));
+  sx = 64; sy = 32; svx = svy = 0; ang = 0.75f; invuln = 1.5f; fireCd = 0; waveCd = 0.6f; tsec = 0;
+  lives = 3; wave = 0; score = 0; over = false; isBest = false; thrusting = false;
+}
+
+void splitRock(Rock &r) {
+  score += (uint32_t)(4 - r.size) * 10;
+  r.on = false;
+  if (r.size > 1) {
+    float sp = sqrtf(r.vx * r.vx + r.vy * r.vy) * 1.25f + 6.0f;
+    float a = frand(0, TAU);
+    addRock(r.size - 1, r.x, r.y, cosf(a) * sp, sinf(a) * sp);
+    addRock(r.size - 1, r.x, r.y, -cosf(a) * sp, -sinf(a) * sp);
+  }
+}
+
+void step() {
+  tsec += DT;
+  if (invuln > 0) invuln -= DT;
+  if (fireCd > 0) fireCd -= DT;
+  if (over) return;
+  ang += clampf(dz(in.tx, 0.06f) * 2.2f, -1.0f, 1.0f) * 0.7f * DT;
+  ang -= floorf(ang);
+  thrusting = in.aHeld;
+  float a = ang * TAU;
+  if (thrusting) { svx += cosf(a) * 95.0f * DT; svy += sinf(a) * 95.0f * DT; }
+  svx *= 0.992f; svy *= 0.992f;
+  float v = sqrtf(svx * svx + svy * svy);
+  if (v > 70.0f) { svx *= 70.0f / v; svy *= 70.0f / v; }
+  sx += svx * DT; sy += svy * DT;
+  if (sx < 0) sx += 128;
+  if (sx >= 128) sx -= 128;
+  if (sy < 0) sy += 64;
+  if (sy >= 64) sy -= 64;
+
+  if (in.cHeld && fireCd <= 0) {
+    for (auto &s : sh) if (!s.on) {
+      s.on = true; s.life = 0.9f;
+      s.x = sx + cosf(a) * 5; s.y = sy + sinf(a) * 5;
+      s.vx = cosf(a) * 95.0f + svx * 0.5f; s.vy = sinf(a) * 95.0f + svy * 0.5f;
+      fireCd = 0.22f;
+      break;
+    }
+  }
+  for (auto &s : sh) if (s.on) {
+    s.x += s.vx * DT; s.y += s.vy * DT; s.life -= DT;
+    if (s.x < 0) s.x += 128;
+    if (s.x >= 128) s.x -= 128;
+    if (s.y < 0) s.y += 64;
+    if (s.y >= 64) s.y -= 64;
+    if (s.life <= 0) s.on = false;
+  }
+  int alive = 0;
+  for (auto &r : rk) if (r.on) {
+    ++alive;
+    r.x += r.vx * DT; r.y += r.vy * DT;
+    if (r.x < -8) r.x += 144;
+    if (r.x > 136) r.x -= 144;
+    if (r.y < -8) r.y += 80;
+    if (r.y > 72) r.y -= 80;
+  }
+  for (auto &s : sh) if (s.on) for (auto &r : rk) if (r.on) {
+    float dx = s.x - r.x, dy = s.y - r.y, rr = RAD[r.size] + 1.0f;
+    if (dx * dx + dy * dy < rr * rr) { s.on = false; splitRock(r); break; }
+  }
+  if (invuln <= 0) for (auto &r : rk) if (r.on) {
+    float dx = sx - r.x, dy = sy - r.y, rr = RAD[r.size] + 2.2f;
+    if (dx * dx + dy * dy < rr * rr) {
+      --lives; invuln = 2.2f; sx = 64; sy = 32; svx = svy = 0;
+      if (lives <= 0) { over = true; isBest = noteScore(score); }
+      break;
+    }
+  }
+  if (alive == 0) { waveCd -= DT; if (waveCd <= 0) spawnWave(); }
+}
+
+void drawRock(U8G2 &d, const Rock &r) {
+  int px0 = 0, py0 = 0;
+  for (int k = 0; k <= 9; ++k) {
+    int kk = k % 9;
+    float h = (float)(((r.seed * 37 + kk * 71) >> 2) & 15) / 15.0f;
+    float rad = RAD[r.size] * (0.55f + 0.45f * h);
+    float a = (float)kk / 9.0f * TAU;
+    int x = (int)lroundf(r.x + cosf(a) * rad), y = (int)lroundf(r.y + sinf(a) * rad);
+    if (k > 0) line(d, px0, py0, x, y);
+    px0 = x; py0 = y;
+  }
+}
+
+void draw(U8G2 &d, uint32_t now) {
+  for (auto &r : rk) if (r.on) drawRock(d, r);
+  for (auto &s : sh) if (s.on) box(d, (int)lroundf(s.x) - 1, (int)lroundf(s.y) - 1, 2, 2);
+  if (!over && (invuln <= 0 || (now / 90) % 2)) {
+    float a = ang * TAU;
+    int nx = (int)lroundf(sx + cosf(a) * 5), ny = (int)lroundf(sy + sinf(a) * 5);
+    int lx = (int)lroundf(sx + cosf(a + 2.5f) * 4), ly = (int)lroundf(sy + sinf(a + 2.5f) * 4);
+    int rx = (int)lroundf(sx + cosf(a - 2.5f) * 4), ry = (int)lroundf(sy + sinf(a - 2.5f) * 4);
+    line(d, nx, ny, lx, ly); line(d, nx, ny, rx, ry); line(d, lx, ly, rx, ry);
+    if (thrusting && ((now / 50) % 2)) {
+      int fx = (int)lroundf(sx - cosf(a) * 8), fy = (int)lroundf(sy - sinf(a) * 8);
+      line(d, (lx + rx) / 2, (ly + ry) / 2, fx, fy);
+    }
+  }
+  d.setFont(u8g2_font_5x7_tf);
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%lu", (unsigned long)score);
+  d.drawStr(0, 7, buf);
+  snprintf(buf, sizeof(buf), "W%d", wave);
+  d.drawStr(64 - d.getStrWidth(buf) / 2, 7, buf);
+  for (int i = 0; i < lives; ++i) box(d, 122 - i * 7, 2, 5, 4);
+  if (over) gameOver(d, score, isBest);
+}
+}  // namespace ast
+
+// =====================================================================================================
+//  STACK: a block slides back and forth, A (or C) drops it. Only the part that lands on the tower stays.
+// =====================================================================================================
+namespace stk {
+const int SHOWN = 7, ROWH = 6, TOPY = 22;
+const float MAXW = 46.0f;
+float lx[8], lw[8];
+int cnt, combo;
+float mx, mw, dir, spd, fallX, fallW, fallY, fallV, popT;
+bool over, isBest, fall;
+uint32_t score;
+
+void reset() {
+  memset(lx, 0, sizeof(lx)); memset(lw, 0, sizeof(lw));
+  cnt = 1; lx[0] = 42; lw[0] = 44;
+  mw = 44; mx = 0; dir = 1; spd = 48; combo = 0; score = 0; over = false; isBest = false; fall = false; popT = 0;
+  fallX = fallW = fallY = fallV = 0;
+}
+
+void drop() {
+  if (over) return;
+  int top = (cnt - 1) & 7;
+  float tx = lx[top], tw = lw[top];
+  float l = fmaxf(mx, tx), r = fminf(mx + mw, tx + tw), ov = r - l;
+  if (ov <= 0.5f) {                                                      // missed the tower completely
+    fallX = mx; fallW = mw; fallY = 16; fallV = 0; fall = true;
+    over = true; isBest = noteScore(score);
+    return;
+  }
+  if (fabsf(mx - tx) <= 2.0f) {                                          // perfect: snap, and after 3 in a row the block grows
+    l = tx; ov = tw; ++combo; score += 2; popT = 0.9f;
+    if (combo >= 3 && ov < MAXW) { ov = fminf(MAXW, ov + 3.0f); l = clampf(l - 1.5f, 0, 128 - ov); }
+  } else {
+    combo = 0; score += 1;
+    fall = true; fallY = 16; fallV = 0;
+    if (mx < tx) { fallX = mx; fallW = l - mx; } else { fallX = r; fallW = mx + mw - r; }
+  }
+  lx[cnt & 7] = l; lw[cnt & 7] = ov; ++cnt;
+  mw = ov;
+  bool left = (cnt & 1) != 0;
+  mx = left ? 0 : 128 - mw; dir = left ? 1 : -1;
+  spd = fminf(140.0f, 48.0f + 2.6f * cnt);
+}
+
+void step() {
+  if (popT > 0) popT -= DT;
+  if (fall) { fallV += 260.0f * DT; fallY += fallV * DT; if (fallY > 70) fall = false; }
+  if (over) return;
+  mx += dir * spd * DT;
+  if (mx < 0) { mx = 0; dir = 1; }
+  if (mx + mw > 128) { mx = 128 - mw; dir = -1; }
+}
+
+void draw(U8G2 &d, uint32_t now) {
+  (void)now;
+  for (int k = 0; k < SHOWN && k < cnt; ++k) {
+    int idx = cnt - 1 - k;
+    int x = (int)lroundf(lx[idx & 7]), w = (int)lroundf(lw[idx & 7]), y = TOPY + k * ROWH;
+    if (idx & 1) frame(d, x, y, w, ROWH - 1); else box(d, x, y, w, ROWH - 1);
+  }
+  if (cnt <= SHOWN) hl(d, 0, TOPY + cnt * ROWH, 128);
+  if (!over) box(d, (int)lroundf(mx), 16, (int)lroundf(mw), ROWH - 1);
+  if (fall && fallW > 0.5f) box(d, (int)lroundf(fallX), (int)lroundf(fallY), (int)lroundf(fallW), ROWH - 1);
+  d.setFont(u8g2_font_5x7_tf);
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%lu", (unsigned long)score);
+  d.drawStr(0, 7, buf);
+  if (popT > 0) d.drawStr(128 - d.getStrWidth("PERFECT!"), 7, "PERFECT!");
+  if (cnt == 1) small(d, "A = drop", 64, 60);
+  if (over) gameOver(d, score, isBest);
+}
+}  // namespace stk
+
+// =====================================================================================================
+//  QUICK DRAW: wait for DRAW!, then press A (or C) before the outlaw does. Too early = you lose. He gets faster.
+// =====================================================================================================
+namespace duel {
+enum State { WAIT, DRAW, WON, LOST, FOUL } st;
+float t, waitT, enemyT, myMs, bestMs;
+int wins;
+bool over, isBest;
+
+void next() {
+  st = WAIT; t = 0;
+  waitT = frand(1.6f, 4.5f);
+  enemyT = clampf(0.52f - 0.03f * wins, 0.24f, 0.52f) + frand(-0.03f, 0.04f);
+}
+
+void reset() { wins = 0; over = false; isBest = false; myMs = 0; bestMs = 0; next(); }
+
+void lose(State s) { st = s; t = 0; over = true; isBest = noteScore((uint32_t)wins); }
+
+void press() {
+  if (over) return;
+  if (st == WAIT) lose(FOUL);
+  else if (st == DRAW) {
+    myMs = t * 1000.0f;
+    if (bestMs <= 0 || myMs < bestMs) bestMs = myMs;
+    ++wins; st = WON; t = 0;
+  }
+}
+
+void step() {
+  t += DT;
+  if (st == WAIT && t >= waitT) { st = DRAW; t = 0; }
+  else if (st == DRAW && t > enemyT) lose(LOST);
+  else if (st == WON && t > 1.4f) next();
+}
+
+void person(U8G2 &d, int x, int dirn, bool armOut, bool down, bool flash) {   // dirn +1 faces right
+  if (down) {                                                            // lying on the ground
+    line(d, x - 9, 51, x + 5, 51); disc(d, x + 8, 50, 3);
+    line(d, x - 9, 51, x - 13, 48);
+    return;
+  }
+  disc(d, x, 31, 3);
+  hl(d, x - 5, 28, 11); box(d, x - 3, 25, 7, 3);                         // hat
+  line(d, x, 34, x, 43);
+  line(d, x, 43, x - 3, 52); line(d, x, 43, x + 3, 52);
+  if (armOut) {
+    hl(d, dirn > 0 ? x : x - 11, 37, 12);
+    box(d, dirn > 0 ? x + 9 : x - 12, 35, 4, 3);                         // the gun
+    if (flash) { int fx = x + dirn * 16; line(d, fx, 37, fx + dirn * 5, 34); line(d, fx, 37, fx + dirn * 6, 37); line(d, fx, 37, fx + dirn * 5, 40); }
+  } else {
+    line(d, x, 36, x + dirn * 4, 42);
+  }
+}
+
+void draw(U8G2 &d, uint32_t now) {
+  hl(d, 0, 53, 128);
+  bool youDown = st == LOST || st == FOUL;
+  person(d, 24, 1, st == WON, youDown, st == WON && t < 0.3f);
+  person(d, 104, -1, youDown, st == WON, youDown && t < 0.3f);
+  d.setFont(u8g2_font_5x7_tf);
+  char buf[28];
+  snprintf(buf, sizeof(buf), "wins %d", wins);
+  d.drawStr(0, 7, buf);
+  if (bestMs > 0) { snprintf(buf, sizeof(buf), "best %dms", (int)bestMs); d.drawStr(128 - d.getStrWidth(buf), 7, buf); }
+  if (st == WAIT) {
+    int dots = (int)((now / 350) % 4);
+    snprintf(buf, sizeof(buf), "steady%.*s", dots, "...");
+    small(d, buf, 64, 20);
+  } else if (st == DRAW) {
+    d.setFont(u8g2_font_logisoso16_tf);
+    int w = d.getStrWidth("DRAW!");
+    if ((now / 70) % 2) { d.setDrawColor(1); d.drawBox((128 - w) / 2 - 4, 10, w + 8, 22); d.setDrawColor(0); d.drawStr((128 - w) / 2, 28, "DRAW!"); d.setDrawColor(1); }
+    else d.drawStr((128 - w) / 2, 28, "DRAW!");
+  } else if (st == WON) {
+    snprintf(buf, sizeof(buf), "BANG! %d ms", (int)myMs);
+    banner(d, buf, 20);
+  }
+  if (st == FOUL) banner(d, "TOO EARLY!", 9);
+  if (over && t > 0.5f) gameOver(d, (uint32_t)wins, isBest);
+}
+}  // namespace duel
 }  // namespace
 
 // ------------------------------------------------------------------------------------------------ public
 const char *name(Id g) {
-  static const char *const N[COUNT] = {"Star Blaster", "Sniper", "Road Rush", "Pinball"};
+  static const char *const N[COUNT] = {"Star Blaster", "Sniper", "Road Rush", "Pinball", "Breakout", "Asteroids", "Stack", "Quick Draw"};
   return (g >= 0 && g < COUNT) ? N[g] : "";
 }
 
@@ -809,6 +1254,10 @@ void begin(Id g) {
     case STAR: star::reset(); break;
     case SNIPER: sniper::reset(); break;
     case ROAD: road::reset(); break;
+    case BREAKOUT: brk::reset(); break;
+    case ASTEROIDS: ast::reset(); break;
+    case STACK: stk::reset(); break;
+    case DUEL: duel::reset(); break;
     default: pin::reset(); break;
   }
 }
@@ -816,7 +1265,7 @@ void begin(Id g) {
 uint8_t update(uint32_t now, const Input &i) {
   in = i;
   uint8_t flags = 0;
-  bool needsTilt = cur != PINBALL;
+  bool needsTilt = usesTilt(cur);
   bool blocked = needsTilt && (!in.tiltOk || in.calibrating);
   bool again = in.a || in.c;
   switch (cur) {
@@ -831,6 +1280,21 @@ uint8_t update(uint32_t now, const Input &i) {
     case ROAD:
       if (road::over && again) { road::reset(); flags |= FLAG_REZERO; }
       break;
+    case BREAKOUT:
+      if (brk::state == brk::OVER) { if (again) { brk::reset(); flags |= FLAG_REZERO; } }
+      else if (!blocked && again) brk::launch();
+      break;
+    case ASTEROIDS:
+      if (ast::over && again) { ast::reset(); flags |= FLAG_REZERO; }
+      break;
+    case STACK:
+      if (stk::over) { if (again) stk::reset(); }
+      else if (again) stk::drop();
+      break;
+    case DUEL:
+      if (duel::over) { if (again && duel::t > 0.7f) duel::reset(); }
+      else if (again) duel::press();
+      break;
     default:
       if (pin::state == pin::OVER) { if (again) pin::reset(); }
       else if (pin::state == pin::SERVE && again) pin::launch();
@@ -843,6 +1307,10 @@ uint8_t update(uint32_t now, const Input &i) {
       case STAR: star::step(); break;
       case SNIPER: sniper::step(); break;
       case ROAD: road::step(); break;
+      case BREAKOUT: brk::step(); break;
+      case ASTEROIDS: ast::step(); break;
+      case STACK: stk::step(); break;
+      case DUEL: duel::step(); break;
       default: pin::step(); break;
     }
     lastStepAt += 20;
@@ -854,7 +1322,7 @@ uint8_t update(uint32_t now, const Input &i) {
 
 void draw(U8G2 &d, uint32_t now) {
   d.setDrawColor(1);
-  bool needsTilt = cur != PINBALL;
+  bool needsTilt = usesTilt(cur);
   if (needsTilt && !in.tiltOk) {
     d.setFont(u8g2_font_7x13B_tf);
     d.drawStr(0, 12, name(cur));
@@ -866,6 +1334,10 @@ void draw(U8G2 &d, uint32_t now) {
     case STAR: star::draw(d, now); break;
     case SNIPER: sniper::draw(d, now); break;
     case ROAD: road::draw(d, now); break;
+    case BREAKOUT: brk::draw(d, now); break;
+    case ASTEROIDS: ast::draw(d, now); break;
+    case STACK: stk::draw(d, now); break;
+    case DUEL: duel::draw(d, now); break;
     default: pin::draw(d, now); break;
   }
   if (needsTilt && in.calibrating) calibrationBanner(d);

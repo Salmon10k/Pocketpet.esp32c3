@@ -18,7 +18,8 @@ static FILE *openOut(const char *name) { std::string p = OUTDIR + "/" + name; FI
 // ------------------------------------------------------------------------------------------ menus
 using launcher::Item;
 static const Item GAMES[] = {{"Star Blaster", launcher::ICON_STAR}, {"Sniper", launcher::ICON_SNIPER}, {"Road Rush", launcher::ICON_ROAD},
-                             {"Pinball", launcher::ICON_PINBALL}, {"Tilt Maze", launcher::ICON_MAZE}, {"Snake", launcher::ICON_SNAKE}, {"Back", launcher::ICON_BACK}};
+                             {"Pinball", launcher::ICON_PINBALL}, {"Breakout", launcher::ICON_BREAKOUT}, {"Asteroids", launcher::ICON_ASTEROID},
+                             {"Stack", launcher::ICON_STACK}, {"Quick Draw", launcher::ICON_DUEL}, {"Tilt Maze", launcher::ICON_MAZE}, {"Snake", launcher::ICON_SNAKE}, {"Back", launcher::ICON_BACK}};
 static const Item TOOLS[] = {{"Temperature", launcher::ICON_TOOLS}, {"Magic 8-ball", launcher::ICON_8BALL}, {"Dice", launcher::ICON_DICE}, {"Back", launcher::ICON_BACK}};
 static const Item SETTINGS[] = {{"Brightness", launcher::ICON_BRIGHT}, {"Screen off", launcher::ICON_SCREEN_OFF}, {"Flip screen", launcher::ICON_FLIP},
                                 {"Menu style", launcher::ICON_STYLE}, {"Lyrics sync", launcher::ICON_SYNC}, {"Music pet", launcher::ICON_SPOTIFY},
@@ -61,7 +62,7 @@ static void introSheet(const char *file) {                 // the glide-in anima
 
 static void iconSheet(const char *file) {
   FILE *f = openOut(file);
-  const int total = launcher::ICON_GITHUB + 1;
+  const int total = launcher::ICON_DUEL + 1;
   for (int base = 0; base < total; base += 15) {
     display.clearBuffer();
     for (int k = 0; k < 15 && base + k < total; ++k) {
@@ -152,8 +153,8 @@ int main(int argc, char **argv) {
     }
     fclose(f);
   }
-  menuSheet("m_games_car.bin", GAMES, 7, 0, nullptr, {0, 3, 6});
-  menuSheet("m_games_ring.bin", GAMES, 7, 1, nullptr, {0, 3, 6});
+  menuSheet("m_games_car.bin", GAMES, 11, 0, nullptr, {0, 4, 7, 10});
+  menuSheet("m_games_ring.bin", GAMES, 11, 1, nullptr, {0, 5});
   menuSheet("m_tools_car.bin", TOOLS, 4, 0, nullptr, {0, 1, 3});
   menuSheet("m_settings_car.bin", SETTINGS, 8, 0, settingsVal, {0, 5, 7});
   menuSheet("m_settings_ring.bin", SETTINGS, 8, 1, settingsVal, {0, 5});
@@ -184,7 +185,7 @@ int main(int argc, char **argv) {
       for (auto &g : sniper::tg) if (g.on && (!tt || g.life < tt->life)) tt = &g;
       if (tt) {
         float wx, wy; sniper::winPos(tt->b, tt->c, tt->r, wx, wy);
-        float ax = wx + 3.5f, ay = wy + 3.2f;
+        float ax, ay; sniper::headPos(tt->b, tt->c, tt->r, ax, ay);
         float cx = sniper::camX + sniper::swx, cy = sniper::camY + sniper::swy;
         float dx = ax - cx, dy = ay - cy, d = sqrtf(dx * dx + dy * dy);
         auto drive = [](float e, float k) { return fabsf(e) < 0.5f ? 0.0f : (e > 0 ? 1 : -1) * clampf(0.07f + fabsf(e) * k, 0, 0.5f); };   // beats the 0.05 dead zone
@@ -205,8 +206,8 @@ int main(int argc, char **argv) {
         float rel = c.z - road::dist;
         if (rel > 0 && rel < 45) { clear = false; if (rel < bestRel) { bestRel = rel; want = c.x > 0.2f ? -0.66f : (c.x < -0.2f ? 0.66f : (road::ppx > 0 ? -0.66f : 0.66f)); } }
       }
-      float cv = road::curveAt(road::dist) * road::spd * road::spd * 0.95f / (3.0f * (0.35f + road::spd));
-      i.tx = clampf((want - road::ppx) * 0.6f + cv, -0.5f, 0.5f);
+      float cv = road::curveAt(road::dist) * road::spd * road::spd * 0.95f / (4.0f * 1.8f * (0.4f + road::spd));
+      i.tx = clampf((want - road::ppx) * 0.35f + cv, -0.5f, 0.5f);
       i.aHeld = clear && road::nitro > 0.2f;
     },
     []() { printf("road: dist %d m, time left %.1f, over %d, ppx %.2f\n", (int)road::dist, road::timeLeft, (int)road::over, road::ppx); });
@@ -224,5 +225,70 @@ int main(int argc, char **argv) {
       i.tiltOk = true;
     },
     []() { printf("pinball: score %lu balls %d state %d drains %d out-of-table samples %d\n", (unsigned long)pin::score, pin::balls, (int)pin::state, drains, violations); });
+
+  // ---------------- Breakout: follow the ball with the paddle, launch when it sits on the paddle
+  runGame("breakout.bin", BREAKOUT, 90, {0.5f, 5.0f, 12.0f, 25.0f, 40.0f, 55.0f, 70.0f, 89.0f},
+    [](float t, uint32_t now, Input &i) {
+      float want = brk::bx + (brk::bx - brk::padX) * 0.0f;
+      i.tx = clampf((want - 64.0f) / 106.0f, -0.5f, 0.5f);
+      if (brk::state == brk::SERVE) i.a = ((int)(t * 50) % 25) == 0;
+    },
+    []() { printf("breakout: score %lu level %d lives %d left %d state %d\n", (unsigned long)brk::score, brk::level, brk::lives, brk::left, (int)brk::state); });
+
+  // ---------------- Asteroids: turn toward the nearest rock, fire when roughly aimed, thrust now and then
+  runGame("asteroids.bin", ASTEROIDS, 90, {1.0f, 6.0f, 12.0f, 20.0f, 30.0f, 45.0f, 60.0f, 89.0f},
+    [](float t, uint32_t now, Input &i) {
+      const ast::Rock *nr = nullptr; float bd = 1e9f;
+      for (auto &r : ast::rk) if (r.on) { float dx = r.x - ast::sx, dy = r.y - ast::sy, d2 = dx * dx + dy * dy; if (d2 < bd) { bd = d2; nr = &r; } }
+      if (nr) {
+        float want = atan2f(nr->y - ast::sy, nr->x - ast::sx) / 6.2831853f; if (want < 0) want += 1;
+        float diff = want - ast::ang; while (diff > 0.5f) diff -= 1; while (diff < -0.5f) diff += 1;
+        i.tx = clampf(diff * 6.0f, -0.5f, 0.5f);
+        i.cHeld = fabsf(diff) < 0.06f;
+        i.aHeld = bd > 900 && fmodf(t, 3.0f) < 0.4f;
+      }
+    },
+    []() { printf("asteroids: score %lu wave %d lives %d over %d\n", (unsigned long)ast::score, ast::wave, ast::lives, (int)ast::over); });
+
+  // ---------------- Stack: drop when the block is close to lined up (imperfect on purpose)
+  runGame("stack.bin", STACK, 80, {0.5f, 8.0f, 16.0f, 28.0f, 40.0f, 55.0f, 70.0f, 79.0f},
+    [](float t, uint32_t now, Input &i) {
+      int top = (stk::cnt - 1) & 7;
+      float err = stk::mx - stk::lx[top];
+      static uint32_t lastDrop = 0;
+      if (!stk::over && fabsf(err) < 3.0f + (float)((now / 1000) % 4) && now - lastDrop > 400) { i.a = true; lastDrop = now; }
+    },
+    []() { printf("stack: score %lu layers %d width %.1f over %d\n", (unsigned long)stk::score, stk::cnt, stk::mw, (int)stk::over); });
+
+  // ---------------- Quick Draw: a player with a 300 ms reaction time
+  runGame("duel.bin", DUEL, 40, {0.5f, 2.5f, 5.0f, 6.0f, 8.0f, 12.0f, 20.0f, 39.0f},
+    [](float t, uint32_t now, Input &i) {
+      static float seenAt = -1; static int lastSt = -1;
+      if ((int)duel::st != lastSt) { lastSt = (int)duel::st; seenAt = duel::st == duel::DRAW ? t : -1; }
+      if (duel::st == duel::DRAW && seenAt >= 0 && t - seenAt >= 0.30f) i.a = true;
+      if (duel::over && duel::t > 0.8f) i.c = true;
+    },
+    []() { printf("duel: wins %d best %d ms over %d\n", duel::wins, (int)duel::bestMs, (int)duel::over); });
+
+  // ---------------- Road Rush traffic close up: sedans and trucks at several distances (must not look like blobs)
+  {
+    FILE *f = openOut("road_cars.bin");
+    begin(ROAD);
+    Input i0 = {}; i0.tiltOk = true;
+    update(20, i0);
+    struct P { float rel, x; uint8_t type; };
+    const std::vector<std::vector<P>> sets = {
+      {{9, -0.66f, 0}, {18, 0.0f, 1}, {34, 0.66f, 0}, {60, -0.66f, 0}, {110, 0.0f, 0}},
+      {{6, 0.0f, 1}, {13, 0.66f, 0}, {26, -0.66f, 1}, {45, 0.0f, 0}, {80, 0.66f, 1}},
+      {{4, 0.66f, 0}, {11, -0.66f, 0}, {22, 0.0f, 0}, {40, 0.66f, 1}, {70, -0.66f, 0}},
+    };
+    for (auto &set : sets) {
+      memset(road::cars, 0, sizeof(road::cars));
+      int k = 0;
+      for (auto &p : set) { road::Car &c = road::cars[k++]; c.on = true; c.z = road::dist + p.rel; c.x = p.x; c.v = 0; c.type = p.type; }
+      display.clearBuffer(); draw(display, 1000); dump(f);
+    }
+    fclose(f);
+  }
   return 0;
 }
