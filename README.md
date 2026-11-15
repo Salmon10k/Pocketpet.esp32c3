@@ -184,7 +184,7 @@ When changing wiring, update `src/config.h` first.
 - [x] Optional Wi-Fi NTP clock (credentials must be configured locally in ignored `src/secrets.h`)
 - [x] Wi-Fi NTP clock
 - [x] Online mode: weather, forecast, AQI, currency, world clocks, fact, advice, moon, net status, ISS, GitHub (verified on the device)
-- [x] Pet reacts to Spotify music, different reactions per genre (in code, PC-tested, not yet on the device)
+- [x] Pet reacts to Spotify music, different reactions per genre (verified on the device 2026-11-15)
 - [x] Launcher / sub-menus, Lyrics visual, Living OLED (verified on the device 2026-11-15)
 - [x] Custom PCB finalised and ordered
 - [ ] Pet sleeps at night
