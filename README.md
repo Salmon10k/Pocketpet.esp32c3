@@ -1,10 +1,10 @@
 # Pocketpet.esp32c3
 
-> **Status (2026-11-14): active again, in small steps.** The project was paused on 2026-10-30 and picked back up
-> for the games/menu revamp (11-12) and a repo review (11-14). A lot of the firmware on `main` (Online, Spotify,
-> Lyrics visual, games, launcher) is still **not fully tested on the device**, and the custom PCB is designed but
-> not finished or ordered (`PCB/` holds the KiCad project only). See `HANDOFF.md` for the details.
-> Do not start big new features unless Salman asks.
+> **Status (2026-11-15): active, in small steps.** The project was paused on 2026-10-30 and picked back up on
+> 11-12. Everything on `main` (pet music reactions, games, launcher, Online, Spotify, Lyrics visual) builds in CI and
+> passes the PC tests, but **most of it has not been flashed and tried on the device yet**. The custom PCB is designed
+> but not finished or ordered (`PCB/` holds the KiCad project only). See `HANDOFF.md` for the details and the
+> "check on the device" lists. Do not start big new features unless Salman asks.
 
 Keychain-sized digital pet gadget built around an ESP32-C3 Super Mini with a 1.3" SH1106 OLED, MPU6050 motion sensor, touch input and three buttons.
 
@@ -39,7 +39,7 @@ The **pet is the home screen**: it is what you see when the keychain turns on an
 - **Carousel** (default): big icons slide in from the right; **A** = previous, **C** = next, **B** = open.
 - **Tilt ring**: the apps sit on a ring; **tilt the keychain toward an app** to highlight it, **B** opens it (A/C also step through them).
 
-In the launcher: Fluid, Stats, Motion test, Tools, Games, Online, Spotify, Visualizer (Lyrics visual), Living OLED, Settings. While it starts, the MPU6050 calibrates itself in the background (gyro offsets, and which way is "down" from gravity), so tilt works however the sensor sits on the board and however you hold the keychain; in Pet mode it re-levels itself when you hold it still in a new pose. Every sub-menu (Tools, Games, Settings and the Online list) uses the same carousel / tilt-ring look as the home screen: **A/C** move, short **B** opens, **hold B** goes up one level, and each one ends with a **Back** item. Settings shows the current value in a pill under the name (brightness, screen auto-off, flip screen, menu style, lyrics sync, reset pet); Games shows your best score. Tools contains Temperature, Magic 8-ball and Dice (shake the keychain to roll / ask).
+In the launcher: Fluid, Stats, Motion test, Tools, Games, Online, Spotify, Visualizer (Lyrics visual), Living OLED, Settings. While it starts, the MPU6050 calibrates itself in the background (gyro offsets, and which way is "down" from gravity), so tilt works however the sensor sits on the board and however you hold the keychain; in Pet mode it re-levels itself when you hold it still in a new pose. Every sub-menu (Tools, Games, Settings and the Online list) uses the same carousel / tilt-ring look as the home screen: **A/C** move, short **B** opens, **hold B** goes up one level, and each one ends with a **Back** item. Settings shows the current value in a pill under the name; Games shows your best score. Tools contains Temperature, Magic 8-ball and Dice (shake the keychain to roll / ask).
 
 ### Games
 Built for the three buttons and the MPU6050. Best scores are saved.
@@ -58,6 +58,9 @@ Built for the three buttons and the MPU6050. Best scores are saved.
 | **Snake** | tilt to steer (or **A** left / **C** right) |
 
 Online has 12 screens that need the internet (see below). Copy `src/secrets.example.h` to `src/secrets.h` and set `WIFI_SSID` / `WIFI_PASSWORD` locally first. The touch pad only works in Pet mode.
+
+### Settings
+Brightness (4 steps), Screen off (Off / 30 s / 1 min / 5 min; any button, touch or movement wakes it), Flip screen (180 degrees), Menu style (carousel / tilt ring), Lyrics sync (shift lyric timing earlier or later), Music pet (On / Off, see Pet mode), Reset pet (press B twice), Back. All of them are saved to flash.
 
 ### Online mode
 Wi-Fi stays **off** everywhere except Online mode. Entering Online connects **once** (up to 3 automatic attempts, then each request is retried up to 3 times for random network hiccups), fetches everything for every screen in one go, and stays connected while you browse. Leaving Online switches the radio off. The list header shows the state: `wifi 2/3`, `sync 4/9`, `online`, `offline`. Every screen shows how old its data is (top right). If a refresh fails you keep the last good data.
@@ -99,6 +102,12 @@ One-time setup (on your PC):
 
 Notes: Spotify apps in development mode need the app owner to have Premium and allow 5 users, which is plenty for one keychain. The screen can freeze for about a second when a song changes (a new secure connection for the lyrics), that is normal. Not every song has synced lyrics; those show the title and artist instead.
 
+### Lyrics visual mode
+Uses the same Spotify session as Spotify mode but shows the lyrics as an animated "reel": one word at a time in an outlined box, over procedural monochrome scenes (16 of them: starfield, tunnel, ripples, spectrum bars and more), with box entrances, inverted flashes and transitions. Which word is shown follows estimated or (when LRCLIB has them) real per-word timing. **A / C** skip tracks, short **B** play/pause, **hold B** back to the menu. Needs the same Spotify setup as above.
+
+### Living OLED mode
+An ambient screensaver: six animated scenes (flow, orbit, field, rain, mesh, terrain). **A / C** next scene, **B** pause / play, hold B to leave.
+
 ### Fluid mode
 Particle water simulation that follows tilt. Hold the device like a phone, it calibrates for half a second (that pose counts as level). A = re-zero, C = Water / Honey / Mercury, B = back.
 
@@ -132,12 +141,20 @@ Happiness and energy are saved to flash (about every 2 minutes when they changed
 7. `partitions.csv` gives the app a 3 MB slot (no OTA) because Wi-Fi + TLS made the firmware too big for the default 1.3 MB slot.
 
 ## Files
-- `src/main.cpp` -> main firmware and pet logic
+- `src/main.cpp` -> main firmware: hardware init, input, MPU6050 handling, pet logic and drawing, Stats, Tilt Maze, Snake, mode switching
+- `src/games.h` / `src/games.cpp` -> the 8 games (Star Blaster, Sniper, Road Rush, Pinball, Breakout, Asteroids, Stack, Quick Draw)
+- `src/launcher.h` / `src/launcher.cpp` -> home menu and all sub-menus (carousel / tilt ring, procedural icons); `src/gfx.*` -> clipped drawing helpers
+- `src/fluid.*` -> particle fluid simulation; `src/living_oled.*` -> Living OLED scenes
+- `src/lyrics_visual.*`, `src/lyric_timing.*`, `src/arabic_shape.*` / `arabic_forms.inc` -> Lyrics visual, word timing, Urdu / Arabic text shaping
 - `src/online.h` / `src/online.cpp` -> Online mode (Wi-Fi state machine, request cache, the 12 screens)
 - `src/vibe.*` -> genre to vibe classification, feel-tempo, energy (pure C++)
 - `src/pet_face.*` / `src/pet_music.*` -> pet eyes and mouth drawing; per-vibe dance poses and decorations
 - `src/spotify.h` / `src/spotify.cpp` -> Spotify mode (token refresh, now playing, controls, LRCLIB lyrics)
 - `tools/spotify_auth.py` -> one-time Spotify login helper (PC)
+- `tools/hostcheck/` -> compiles all firmware sources on a PC against mock Arduino headers (a syntax check, no ESP32 needed)
+- `tools/gamepreview/` -> renders menus and games to PNG sheets on the PC, scripted "AI players", random-input fuzz test
+- `tools/petpreview/`, `tools/vibetest/`, `tools/fluidtest/` -> the pet's music reactions, the genre/vibe logic and the fluid, tested on the PC
+- `PCB/` -> KiCad project for the custom board (not finished)
 - `src/config.h` -> all GPIO assignments, I2C addresses and pet tuning
 - `platformio.ini` -> PlatformIO build configuration
 - `partitions.csv` -> flash layout (one 3 MB app slot)
@@ -156,18 +173,20 @@ When changing wiring, update `src/config.h` first.
 - [x] Repo + starter project
 - [x] OLED confirmed working (SH1106, GPIO 8/9)
 - [x] Touch pad soldered on, signal on GPIO4
-- [x] I2C roles swapped: OLED on hardware I2C, MPU6050 on SoftWire (superseded 2026-11-09: both now share the hardware bus on GPIO 8/9)
+- [x] OLED and MPU6050 share the hardware I2C bus on GPIO 8/9 (the earlier SoftWire split was removed on 2026-11-09)
 - [x] Improved pet mode: moods, eased eyes, touch petting, motion reactions, sleep, hearts, Zzz
 - [x] Stats screen with flash-saved happiness and energy
-- [x] Verify current firmware on hardware
+- [x] Verify the first pet firmware on hardware (later features are still unverified)
 - [ ] Try the RoboEyes library for the eyes (optional, only if the current look is not liked)
 - [x] Temperature mode
 - [x] Game mode (Magic 8-ball + Dice)
-- [x] Games (Star Blaster, Sniper, Road Rush, Pinball, generated Tilt Maze, tilt Snake)
+- [x] Games: Star Blaster, Sniper, Road Rush, Pinball, Breakout, Asteroids, Stack, Quick Draw, generated Tilt Maze, tilt Snake (in code, PC-tested, not yet tried on the device)
 - [x] Touch pad (Pet mode only)
 - [x] Optional Wi-Fi NTP clock (credentials must be configured locally in ignored `src/secrets.h`)
 - [x] Wi-Fi NTP clock
 - [x] Online mode: weather, forecast, AQI, currency, world clocks, fact, advice, moon, net status, ISS, GitHub (in code, host-checked, not yet tested on the device)
+- [x] Pet reacts to Spotify music, different reactions per genre (in code, PC-tested, not yet on the device)
+- [x] Launcher / sub-menus, Lyrics visual, Living OLED (in code, not yet fully tested on the device)
 - [ ] Pet sleeps at night
 - [ ] Battery monitoring (GPIO3 divider)
 - [ ] Deep sleep / wake on touch
@@ -177,15 +196,3 @@ When changing wiring, update `src/config.h` first.
 > **OLED + MPU6050 share one hardware I2C bus on GPIO 8 (SDA) / 9 (SCL).**
 
 If another developer or AI agent continues this project, read `src/config.h` and this README before changing pin assignments or the bus setup. The pet logic is separated from the drawing: `currentFace()` decides the mood, `faceParams()` maps a mood to eye/mouth targets, and `drawPet()` eases toward them.
-
-
-## Work completed today (2026-10-10)
-
-Today’s development session focused on expanding the games and preparing the online clock feature:
-
-- **Tilt Maze:** planned/prototyped a procedural maze system, with randomized maze generation, solvable layouts, reversed left/right tilt behavior, and a 45° forward-facing MPU6050 neutral angle.
-- **Dino Runner:** expanded the design with jump/crouch controls, additional obstacle types, flying obstacles, and more polished movement/animation.
-- **Online clock:** added the Wi-Fi/NTP clock direction, including local credential handling through the ignored `src/secrets.h` file and an example template at `src/secrets.example.h`.
-- **Documentation:** updated the handoff notes and README to record the work from this session.
-
-**Hardware status:** these new changes were not fully hardware-validated today. The existing Batch 1 hardware features remain the known-tested baseline. Do not treat the new maze, Dino upgrades, or Wi-Fi clock as hardware-confirmed until they are built, flashed, and tested on the device.
