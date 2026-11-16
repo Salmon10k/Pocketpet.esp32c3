@@ -3,6 +3,7 @@
 #include <U8g2lib.h>
 #include <Preferences.h>
 #include <esp_system.h>
+#include <time.h>
 #include "config.h"
 #include "fluid.h"
 #include "online.h"
@@ -10,6 +11,8 @@
 #include "lyrics_visual.h"
 #include "living_oled.h"
 #include "launcher.h"
+#include "steps.h"
+#include "steps_view.h"
 #include "games.h"
 #include "pet_face.h"
 #include "pet_music.h"
@@ -194,12 +197,20 @@ void saveStats(bool force) {
 uint32_t lastActivity = 0;      // any touch, button or motion
 uint32_t lastInteraction = 0;   // touch or button only
 
+// ---------------- Step counter state (detector in steps.cpp, glue further down) ----------------
+const uint16_t STEP_GOALS[] = {4000, 6000, 8000, 10000, 12000};
+const int STEP_GOAL_COUNT = 5;
+steps::Detector stepDet;
+steps::History stepHist;                 // today + 6 days back, saved to flash as one small blob
+uint32_t stepSavedToday = 0, stepLastSave = 0, stepHappyAcc = 0, offlineDayAt = 0, goalFlashUntil = 0;
+bool goalDone = false, cheerPending = false;
+
 // ---------------- Settings (saved to flash) ----------------
 const uint8_t BRIGHT_LEVELS[] = {8, 60, 150, 255};
 const char *BRIGHT_NAMES[] = {"Low", "Medium", "High", "Max"};
 const uint32_t SLEEP_MS[] = {0, 30000, 60000, 300000};
 const char *SLEEP_NAMES[] = {"Off", "30 s", "1 min", "5 min"};
-uint8_t setBright = 2, setSleep = 0, setFlip = 0, setLyric = 3, setMenu = 0, setMusicPet = 1;   // setMusicPet: the pet dances to Spotify (needs Wi-Fi)   // setMenu: 0 carousel, 1 tilt ring
+uint8_t setBright = 2, setSleep = 0, setFlip = 0, setLyric = 3, setMenu = 0, setMusicPet = 1, setGoal = 1;   // setMusicPet: the pet dances to Spotify (needs Wi-Fi)   // setMenu: 0 carousel, 1 tilt ring
 const int LYRIC_STEPS[] = {-500, -300, -150, 0, 150, 300, 500, 800};   // ms, + = lyrics earlier
 const int LYRIC_STEP_COUNT = 8;
 bool screenOff = false;
@@ -218,6 +229,7 @@ void loadSettings() {
   setLyric = constrain(prefs.getUChar("lyoff", 3), 0, LYRIC_STEP_COUNT - 1);
   setMenu = prefs.getUChar("menu", 0) ? 1 : 0;
   setMusicPet = prefs.getUChar("musicpet", 1) ? 1 : 0;
+  setGoal = constrain(prefs.getUChar("stepgoal", 1), 0, STEP_GOAL_COUNT - 1);
   for (int i = 0; i < games::COUNT; ++i) games::best[i] = prefs.getUInt(BEST_KEYS[i], 0);
   spotify::setLyricOffset(LYRIC_STEPS[setLyric]);
 }
@@ -229,6 +241,7 @@ void saveSettings() {
   prefs.putUChar("lyoff", setLyric);
   prefs.putUChar("menu", setMenu);
   prefs.putUChar("musicpet", setMusicPet);
+  prefs.putUChar("stepgoal", setGoal);
 }
 
 void saveBest() {
@@ -257,7 +270,7 @@ void statsTick(uint32_t now) {
 }
 
 // ---------------- Pet events and faces ----------------
-enum Overlay { OV_NONE, OV_DIZZY, OV_SURPRISED, OV_LAUGH, OV_LOVE, OV_PURR };
+enum Overlay { OV_NONE, OV_DIZZY, OV_SURPRISED, OV_LAUGH, OV_LOVE, OV_PURR, OV_CHEER };
 Overlay overlay = OV_NONE;
 uint32_t overlayUntil = 0;
 
@@ -267,6 +280,67 @@ void trigger(Overlay o, uint32_t ms) {
   if (dizzyBusy && o != OV_DIZZY) return;   // dizziness wins over everything
   overlay = o;
   overlayUntil = now + ms;
+}
+
+// ---------------- Step counter glue ----------------
+bool clockValid() { return time(nullptr) > 1700000000; }   // set by the Online / Spotify NTP sync
+
+int32_t todayNumber() {
+  time_t t = time(nullptr);
+  struct tm lt;
+  localtime_r(&t, &lt);
+  return steps::daysFromCivil(lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday);
+}
+
+void loadSteps() {
+  if (prefs.getBytesLength("stepH") == sizeof(stepHist)) prefs.getBytes("stepH", &stepHist, sizeof(stepHist));
+  stepSavedToday = stepHist.cnt[0];
+  goalDone = stepHist.cnt[0] >= STEP_GOALS[setGoal];
+  steps::reset(stepDet);
+}
+
+// Flash writes are rationed: every 100 steps or 5 minutes, whichever comes first (and on a new day / goal).
+void saveSteps(bool force) {
+  uint32_t now = millis();
+  int diff = (int)stepHist.cnt[0] - (int)stepSavedToday;
+  if (!force && (diff == 0 || (diff < 100 && diff > 0 && now - stepLastSave < 300000))) return;
+  prefs.putBytes("stepH", &stepHist, sizeof(stepHist));
+  stepSavedToday = stepHist.cnt[0];
+  stepLastSave = now;
+}
+
+// Once a second: new day? With a synced clock the date decides; without one the day rolls after 24 h of uptime.
+void stepsDayTick(uint32_t now) {
+  if (clockValid()) {
+    int32_t today = todayNumber();
+    if (today != stepHist.day) {
+      bool first = (stepHist.day == 0);
+      steps::rollTo(stepHist, today);
+      if (!first) { goalDone = false; cheerPending = false; }
+      saveSteps(true);
+    }
+    offlineDayAt = now;
+  } else if (now - offlineDayAt >= 86400000UL) {
+    offlineDayAt = now;
+    int32_t d = stepHist.day;
+    steps::rollTo(stepHist, (d ? d : 1) + 1);         // keeps the shifted days; the date is fixed on the next sync
+    if (!d) stepHist.day = 0;
+    goalDone = false; cheerPending = false;
+    saveSteps(true);
+  }
+}
+
+void onSteps(int n, uint32_t now) {
+  stepHist.cnt[0] += n;
+  stepHappyAcc += n;
+  while (stepHappyAcc >= 50) { stepHappyAcc -= 50; addHappy(1); }     // walking makes the pet happy
+  if (!goalDone && stepHist.cnt[0] >= STEP_GOALS[setGoal]) {
+    goalDone = true;
+    cheerPending = true;
+    goalFlashUntil = now + 6000;
+    addHappy(15);
+    saveSteps(true);
+  }
 }
 
 enum Face {
@@ -282,6 +356,7 @@ Face currentFace(uint32_t now) {
       case OV_LAUGH:     return F_LAUGH;
       case OV_LOVE:      return F_LOVE;
       case OV_PURR:      return F_PURR;
+      case OV_CHEER:     return F_LAUGH;   // daily step goal reached
       default: break;
     }
   }
@@ -430,6 +505,11 @@ void drawPet(uint32_t now) {
   }
   petMusicPlaying = music;
 
+  // Walking: while steps are being counted the pet strolls along (happy face, bounce on every step, speed lines).
+  bool cheer = (overlay == OV_CHEER && now < overlayUntil);
+  bool strolling = !music && !cheer && now >= overlayUntil && steps::walking(stepDet, now) && face != F_SLEEPING;
+  if (strolling) { face = F_HAPPY; p = faceParams(F_HAPPY, now); }
+
   // Blink and wink (only when the eyes are open and normal).
   bool normalEyes = (p.style == EY_NORMAL);
   if (normalEyes && now >= nextBlinkAt) {
@@ -472,9 +552,12 @@ void drawPet(uint32_t now) {
   int bob = (int)roundf(sinf(now / (face == F_SLEEPING ? 900.0f : 650.0f)) * 1.3f);
   if (face == F_LAUGH) bob += ((now / 60) % 2) ? 1 : -1;
   int mdx = music ? mp.dx : 0, mdy = music ? mp.dy : 0;      // the dance moves the whole face
+  if (strolling) { uint32_t age = now - stepDet.lastStepAt; mdy += age < 70 ? -2 : (age < 150 ? -1 : 0); }
+  if (cheer) mdy = -(int)(fabsf(sinf(now / 130.0f)) * 5);        // jumping for joy
   int cy = EYE_Y + bob + mdy;
 
   // Hearts while purring.
+  if (cheer && now >= nextHeartAt) { spawnHeart(now); nextHeartAt = now + 140; }
   if (face == F_PURR && now >= nextHeartAt) {
     spawnHeart(now);
     nextHeartAt = now + 320;
@@ -487,6 +570,8 @@ void drawPet(uint32_t now) {
   drawMouth(p.mouth, MOUTH_Y + bob + mdy, now, mdx);
   drawHearts(now);
   if (music) petmusic::decor(display, mus, mp, cy, now);
+  if (strolling) stepsview::decorWalk(display, cy, EYE_R_X, steps::cadence(stepDet, now), now);
+  if (cheer) stepsview::decorCheer(display, overlayUntil - 4500, now);
   if (face == F_SLEEPING) drawZzz(now);
 }
 
@@ -1014,16 +1099,29 @@ const char *resetReasonText() {
 // loop Hz = how often loop() runs (the main loop yields with delay(1), so a few hundred is normal).
 uint32_t dbgFrames = 0, dbgLoops = 0, dbgAt = 0;
 uint16_t dbgFps = 0, dbgLoopHz = 0;
-int statsPage = 0;                       // 0 = pet stats, 1 = system numbers (A or C flips the page)
+int statsPage = 0;                       // 0 = pet stats, 1 = steps, 2 = system numbers (A / C flip the page)
+
+void drawSteps(uint32_t now) {
+  stepsview::Info in;
+  in.h = &stepHist;
+  in.goal = STEP_GOALS[setGoal];
+  in.walking = steps::walking(stepDet, now);
+  in.cadence = steps::cadence(stepDet, now);
+  in.clockOk = clockValid();
+  in.flash = now < goalFlashUntil && ((now / 200) & 1);
+  stepsview::draw(display, in, now);
+}
 
 void drawStats() {
   char line[32];
   display.setFont(u8g2_font_7x13B_tf);
-  display.drawStr(0, 12, statsPage == 0 ? "STATS" : "SYSTEM");
-  display.setFont(u8g2_font_5x7_tf);
-  const char *hint = statsPage == 0 ? "A/C: system" : "A/C: pet";
-  display.drawStr(128 - display.getStrWidth(hint), 10, hint);
+  display.drawStr(0, 12, statsPage == 0 ? "STATS" : (statsPage == 1 ? "STEPS" : "SYSTEM"));
+  for (int i = 0; i < 3; ++i) {                                       // page dots
+    if (i == statsPage) display.drawDisc(108 + i * 6, 8, 2);
+    else display.drawCircle(108 + i * 6, 8, 2);
+  }
   display.drawHLine(0, 15, 128);
+  if (statsPage == 1) { drawSteps(millis()); return; }
 
   if (statsPage == 0) {
     drawBar(22, "Happy", pet.happy);
@@ -1052,11 +1150,11 @@ void drawStats() {
 
 bool resetArmed = false;
 uint32_t settingsMsgUntil = 0;
-const int SETTINGS_ROWS = 8;
+const int SETTINGS_ROWS = 9;
 const launcher::Item settingsMenu[SETTINGS_ROWS] = {
   {"Brightness", launcher::ICON_BRIGHT}, {"Screen off", launcher::ICON_SCREEN_OFF}, {"Flip screen", launcher::ICON_FLIP},
   {"Menu style", launcher::ICON_STYLE}, {"Lyrics sync", launcher::ICON_SYNC}, {"Music pet", launcher::ICON_SPOTIFY},
-  {"Reset pet", launcher::ICON_RESET}, {"Back", launcher::ICON_BACK}};
+  {"Step goal", launcher::ICON_STEPS}, {"Reset pet", launcher::ICON_RESET}, {"Back", launcher::ICON_BACK}};
 
 const char *settingsValue(int i) {                  // the little pill under the name
   static char buf[12];
@@ -1067,7 +1165,8 @@ const char *settingsValue(int i) {                  // the little pill under the
     case 3: return setMenu ? "Tilt ring" : "Carousel";
     case 4: snprintf(buf, sizeof(buf), LYRIC_STEPS[setLyric] > 0 ? "+%dms" : "%dms", LYRIC_STEPS[setLyric]); return buf;
     case 5: return setMusicPet ? "On" : "Off";
-    case 6: return resetArmed ? "Sure? B" : "";
+    case 6: snprintf(buf, sizeof(buf), "%u", (unsigned)STEP_GOALS[setGoal]); return buf;
+    case 7: return resetArmed ? "Sure? B" : "";
     default: return "";
   }
 }
@@ -1259,6 +1358,7 @@ void setup() {
 
   loadStats();
   loadSettings();
+  loadSteps();
   if (oledUp) applyScreen();
   stamp("stats loaded");
 
@@ -1383,6 +1483,11 @@ void loop() {
       float dev = fabsf(amag - 1.0f);
       float spin = fabsf(motion.gx) + fabsf(motion.gy) + fabsf(motion.gz);
 
+      // Step counter: always on, but not while the device is being played with or shaken.
+      bool playing = (mode == MODE_GAME || mode == MODE_FLUID || mode == MODE_TILT_MAZE || mode == MODE_SNAKE || mode == MODE_8BALL || mode == MODE_DICE);
+      int newSteps = steps::feed(stepDet, motion.ax, motion.ay, motion.az, now, playing || dev > 1.0f || spin > 350.0f);
+      if (newSteps) onSteps(newSteps, now);
+
       if (dev > 0.12f || spin > 45.0f) lastActivity = now;
       if ((mode == MODE_8BALL || mode == MODE_DICE) && (dev > 0.55f || spin > 260.0f) && now - shakeAt > 700) { shakeAt = now; shaken = true; }
 
@@ -1402,6 +1507,8 @@ void loop() {
       mpuFails = 0;
     }
   }
+
+  if (cheerPending && mode == MODE_PET) { cheerPending = false; trigger(OV_CHEER, 4500); }
 
   // Touch petting: tap = love, hold = purr.
   if (mode == MODE_PET) {
@@ -1430,6 +1537,8 @@ void loop() {
   if (now - lastTick >= 1000) {
     lastTick = now;
     statsTick(now);
+    stepsDayTick(now);
+    saveSteps(false);
     saveStats(false);
     if (games::takeBestDirty()) saveBest();
   }
@@ -1491,7 +1600,7 @@ void loop() {
   } else if (mode == MODE_TOOLS || mode == MODE_GAMES || mode == MODE_SETTINGS) {
     bool longB;
     int pick = menuPick(now, a, b, c, longB);                          // same controls as the home menu; hold B = up one level
-    if (mode == MODE_SETTINGS && launcher::selected() != 6) resetArmed = false;
+    if (mode == MODE_SETTINGS && launcher::selected() != 7) resetArmed = false;
     if (longB) {
       enterMode(MODE_MENU);
     } else if (pick >= 0 && mode == MODE_TOOLS) {
@@ -1513,7 +1622,8 @@ void loop() {
       else if (pick == 3) { setMenu ^= 1; launcher::restyle(setMenu, now); saveSettings(); }
       else if (pick == 4) { setLyric = (setLyric + 1) % LYRIC_STEP_COUNT; spotify::setLyricOffset(LYRIC_STEPS[setLyric]); saveSettings(); }
       else if (pick == 5) { setMusicPet ^= 1; saveSettings(); }
-      else if (pick == 6) {
+      else if (pick == 6) { setGoal = (setGoal + 1) % STEP_GOAL_COUNT; goalDone = stepHist.cnt[0] >= STEP_GOALS[setGoal]; saveSettings(); }
+      else if (pick == 7) {
         if (resetArmed) { resetPet(); resetArmed = false; settingsMsgUntil = millis() + 1500; }
         else resetArmed = true;
       } else enterMode(MODE_MENU);
@@ -1601,7 +1711,8 @@ void loop() {
     }
   } else if (mode == MODE_STATS) {
     if (b) enterMode(MODE_MENU);
-    else if (a || c) statsPage ^= 1;                     // pet stats <-> system numbers
+    else if (a) statsPage = (statsPage + 2) % 3;         // pet -> steps -> system (A = back, C = forward)
+    else if (c) statsPage = (statsPage + 1) % 3;
   } else if (b) {
     enterMode(MODE_MENU);
   }

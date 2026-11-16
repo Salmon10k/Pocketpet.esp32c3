@@ -566,6 +566,13 @@ void drawIcon(U8G2 &d, int app, int cx, int cy, int r, uint32_t t) {
       if (!t || ((ph / 14) & 1)) { px(d, X(9), Y(-1)); px(d, X(10), Y(0)); }
       break;
     }
+    case ICON_STEPS: {                                                  // two footprints that take turns
+      int f = t ? ((ph / 18) & 1) : 0;
+      int yl = f ? -3 : 0, yr = f ? 0 : -3;
+      box(d, X(-9), Y(-7 + yl), S(6), S(6)); box(d, X(-8), Y(0 + yl), S(4), S(3)); px(d, X(-9), Y(-8 + yl));
+      box(d, X(3), Y(-4 + yr), S(6), S(6)); box(d, X(4), Y(3 + yr), S(4), S(3)); px(d, X(8), Y(-5 + yr));
+      break;
+    }
     default: frame(d, X(-8), Y(-8), S(16) + 1, S(16) + 1); break;
   }
 }

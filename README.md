@@ -72,7 +72,7 @@ Built for the three buttons and the MPU6050. Best scores are saved.
 Online has 12 screens that need the internet (see below). Copy `src/secrets.example.h` to `src/secrets.h` and set `WIFI_SSID` / `WIFI_PASSWORD` locally first. The touch pad only works in Pet mode.
 
 ### Settings
-Brightness (4 steps), Screen off (Off / 30 s / 1 min / 5 min; any button, touch or movement wakes it), Flip screen (180 degrees), Menu style (carousel / tilt ring), Lyrics sync (shift lyric timing earlier or later), Music pet (On / Off, see Pet mode), Reset pet (press B twice), Back. All of them are saved to flash.
+Brightness (4 steps), Screen off (Off / 30 s / 1 min / 5 min; any button, touch or movement wakes it), Flip screen (180 degrees), Menu style (carousel / tilt ring), Lyrics sync (shift lyric timing earlier or later), Music pet (On / Off, see Pet mode), Step goal (4000 / 6000 / 8000 / 10000 / 12000), Reset pet (press B twice), Back. All of them are saved to flash.
 
 ### Online mode
 Wi-Fi stays **off** everywhere except Online mode. Entering Online connects **once** (up to 3 automatic attempts, then each request is retried up to 3 times for random network hiccups), fetches everything for every screen in one go, and stays connected while you browse. Leaving Online switches the radio off. The list header shows the state: `wifi 2/3`, `sync 4/9`, `online`, `offline`. Every screen shows how old its data is (top right). If a refresh fails you keep the last good data.
@@ -133,8 +133,19 @@ Particle water simulation that follows tilt. Hold the device like a phone, it ca
 - Any touch, button press or movement wakes it up.
 - **Music pet (Settings > Music pet, default On):** while Spotify is playing, Pet mode quietly opens a Spotify session (Wi-Fi, so it costs battery; it drops when the screen turns off or you leave Pet mode) and the pet dances to the song. The reaction depends on the vibe: **Chill** (eyes closed, headphones, slow sway), **Pop** (happy eyes, bounce, notes and sparkles), **Hype** (shades, head nods, impact lines), **Rock** (angry eyes, headbang, lightning), **EDM** (big pulsing pupils, equalizer, strobe on the bar), **Desi** (dreamy eyes, wide sway, hearts), **Dreamy** (starry eyes, twinkles). The mouth flaps on sung words. The vibe name flashes briefly when a track starts; a trailing **?** means it was guessed (no genre data) from the title and lyric speed. The beat is a steady feel-tempo per vibe locked to the song position, not the song's real BPM (Spotify no longer gives tempo).
 
+### Step counter
+The MPU6050 counts your steps all the time, in every mode and with the screen off, using the same 50 Hz motion loop the rest of the firmware uses (no extra hardware). The detector (`src/steps.cpp`) smooths the accelerometer magnitude, subtracts gravity, adapts its threshold to how hard you walk and only starts counting once the rhythm looks like walking (4 peaks 0.3 to 1.0 s apart, the first four are credited afterwards). Shaking, tapping and playing games / Fluid / Tilt Maze / Snake / Dice / 8-ball never count. Hanging off a bag or in a pocket both work.
+
+- **Stats > STEPS page** (press A or C on Stats): a ring of ticks that fills toward your goal and flashes when you hit it, today's count and percent (two little feet take turns while you walk), the goal, yesterday, distance and kcal (rough: 0.75 m and 0.04 kcal per step) or your cadence while walking, and the last 7 days as bars with the goal as a dotted line.
+- **The pet reacts:** while you walk it strolls along (happy face, bounces on every step, speed lines, a sweat drop when you jog), every 50 steps it gets happier, and when you reach the goal it jumps with confetti and a blinking GOAL! (+15 happiness).
+- **Saved to flash** as one small blob (today + 6 days), every 100 steps or 5 minutes, and on a new day or goal. Days roll over by the date once the clock has synced over Wi-Fi (Online or Spotify); with no clock the day rolls after 24 h of uptime and the Steps page says "no clock sync". Goal: Settings > Step goal.
+- Tested on the PC with simulated walking, jogging, idle, fidgeting and shaking: `bash tools/steptest/run.sh`, screens: `bash tools/steptest/build_preview.sh`.
+
+![Steps page states](docs/images/steps-page.png)
+![Walking and goal pet](docs/images/steps-pet.png)
+
 ### Stats
-Happiness and energy are saved to flash (about every 2 minutes when they changed, and when leaving Pet mode), so the pet remembers across reboots. The Stats screen shows both bars and a lifetime pet count. **A or C flips it to a System page** with the numbers that matter for debugging: FPS (frames sent to the OLED, capped at 25), how often `loop()` runs, free heap, lowest free heap since boot, the largest free block (the real limit for a TLS connection), app size, uptime and why the chip last restarted. Open it before and after using Online or Spotify to see how much heap they eat.
+Happiness and energy are saved to flash (about every 2 minutes when they changed, and when leaving Pet mode), so the pet remembers across reboots. The Stats screen shows both bars and a lifetime pet count. **A or C flips pages: pet, steps, System.** The System page has the numbers that matter for debugging: FPS (frames sent to the OLED, capped at 25), how often `loop()` runs, free heap, lowest free heap since boot, the largest free block (the real limit for a TLS connection), app size, uptime and why the chip last restarted. Open it before and after using Online or Spotify to see how much heap they eat.
 
 ### Other
 - Button debouncing with press events.
@@ -165,6 +176,8 @@ Happiness and energy are saved to flash (about every 2 minutes when they changed
 - `tools/spotify_auth.py` -> one-time Spotify login helper (PC)
 - `tools/hostcheck/` -> compiles all firmware sources on a PC against mock Arduino headers (a syntax check, no ESP32 needed)
 - `tools/gamepreview/` -> renders menus and games to PNG sheets on the PC, scripted "AI players", random-input fuzz test
+- `src/steps.h/.cpp`, `src/steps_view.h/.cpp` -> step detector + day history (pure C++) and the Steps page / pet decorations drawing
+- `tools/steptest/` -> PC tests and preview renders of the step counter
 - `tools/petpreview/`, `tools/vibetest/`, `tools/fluidtest/` -> the pet's music reactions, the genre/vibe logic and the fluid, tested on the PC
 - `PCB/` -> KiCad project for the custom board (finalised and ordered 2026-11-15)
 - `src/config.h` -> all GPIO assignments, I2C addresses and pet tuning

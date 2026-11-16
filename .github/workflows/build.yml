@@ -62,6 +62,12 @@ jobs:
       - name: Host syntax check (custom PCB pins)
         run: EXTRA_FLAGS="-DHW_PCB_V1=1" bash tools/hostcheck/check.sh
 
+      # Step detector on simulated walking / jogging / shaking / idle + calendar helpers, then the Steps screens drawn on the PC.
+      - name: Step counter tests
+        run: |
+          bash tools/steptest/run.sh
+          OUT=/tmp/step-preview-build bash tools/steptest/build_preview.sh /tmp/step-preview-out
+
       # Genre / vibe classification, tempo and energy (pure C++).
       - name: Vibe tests
         run: bash tools/vibetest/run.sh
