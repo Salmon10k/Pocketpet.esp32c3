@@ -155,6 +155,9 @@ void updateTouch(uint32_t now) {
 // Companion style: nothing can die. Energy and happiness only change how the
 // pet looks and acts.
 Preferences prefs;
+const float HAPPY_FLOOR = 40.0f;          // the pet is never unhappy: happiness lives between 40 and 100
+bool greetPending = false;               // you came back after a long break: the pet is delighted
+
 struct PetStats {
   float happy;     // 0..100
   float energy;    // 0..100
@@ -166,7 +169,7 @@ uint32_t lastSave = 0;
 
 void loadStats() {
   prefs.begin("pocketpet", false);
-  pet.happy = prefs.getUChar("happy", 60);
+  pet.happy = max(HAPPY_FLOOR, (float)prefs.getUChar("happy", 60));   // old saves could be low: nothing is sad any more
   pet.energy = prefs.getUChar("energy", 80);
   pet.pets = prefs.getUInt("pets", 0);
   savedHappy = (uint8_t)pet.happy;
@@ -254,7 +257,7 @@ void resetPet() {
   savedHappy = 60; savedEnergy = 80; savedPets = 0;
 }
 
-void addHappy(float v) { pet.happy = constrain(pet.happy + v, 0.0f, 100.0f); }
+void addHappy(float v) { pet.happy = constrain(pet.happy + v, HAPPY_FLOOR, 100.0f); }
 
 // Called once per second.
 void statsTick(uint32_t now) {
@@ -264,9 +267,12 @@ void statsTick(uint32_t now) {
   } else {
     pet.energy = max(10.0f, pet.energy - 0.025f);   // about -1.5 per minute awake
   }
-  if ((now - lastInteraction) > 20000) {
-    pet.happy = max(15.0f, pet.happy - 0.05f);      // about -3 per minute of neglect
-  }
+  // No sulking: being ignored never makes the pet sad. Happiness only settles back toward a calm baseline
+  // (about -1 per minute from a high), the pet just gets sleepy and falls asleep (see currentFace) and is happy to
+  // see you again (greetPending). Being active (a good day of steps yesterday, steps so far today) lifts the baseline.
+  float base = 55.0f + (stepHist.cnt[1] >= STEP_GOALS[setGoal] ? 8.0f : 0.0f) + (stepHist.cnt[0] >= STEP_GOALS[setGoal] / 2 ? 5.0f : 0.0f);
+  if (pet.happy > base) pet.happy = max(base, pet.happy - 0.02f);
+  else if (pet.happy < base) pet.happy = min(base, pet.happy + 0.02f);
 }
 
 // ---------------- Pet events and faces ----------------
@@ -344,7 +350,7 @@ void onSteps(int n, uint32_t now) {
 }
 
 enum Face {
-  F_NEUTRAL, F_HAPPY, F_SLEEPY, F_SLEEPING, F_SAD,
+  F_NEUTRAL, F_HAPPY, F_SLEEPY, F_SLEEPING,
   F_SURPRISED, F_DIZZY, F_LOVE, F_PURR, F_LAUGH
 };
 
@@ -363,7 +369,6 @@ Face currentFace(uint32_t now) {
   uint32_t idle = now - lastActivity;
   if (idle > IDLE_SLEEP_MS) return F_SLEEPING;
   if (idle > IDLE_SLEEPY_MS || pet.energy < 25) return F_SLEEPY;
-  if (pet.happy < 30) return F_SAD;
   if (pet.happy > 70) return F_HAPPY;
   return F_NEUTRAL;
 }
@@ -371,37 +376,34 @@ Face currentFace(uint32_t now) {
 // The eyes and mouth are drawn by pet_face.cpp (so the PC preview can draw the same face).
 using petface::EyeStyle;
 using petface::MouthType;
-using petface::EY_NORMAL; using petface::EY_ARC; using petface::EY_SPIRAL; using petface::EY_CLOSED;
+using petface::EY_NORMAL; using petface::EY_ARC; using petface::EY_SPIRAL; using petface::EY_CLOSED; using petface::EY_HEART; using petface::EY_STAR;
 using petface::M_FLAT; using petface::M_SMILE; using petface::M_CAT; using petface::M_BIG; using petface::M_O;
 using petface::M_FROWN; using petface::M_WAVY; using petface::M_TINY; using petface::M_YAWN;
 
 struct FaceParams {
   EyeStyle style;
   float open;       // 0..1.2 eye height
-  float pupil;      // pupil radius
-  float lid;        // upper lid droop 0..1
-  float slant;      // + angry, - sad
-  float lower;      // lower lid raise (cheeks) 0..1
-  float lookBiasY;  // pupils drift up/down
+  float lid;        // flat upper lid droop 0..1
+  float slant;      // + angry, - tired
+  float lower;      // happy lower lid 0..1
   MouthType mouth;
 };
 
 FaceParams faceParams(Face f, uint32_t now) {
   switch (f) {
-    case F_HAPPY:     return {EY_NORMAL, 1.0f, 8, 0.00f, 0.0f, 0.22f, 0, M_CAT};
+    case F_HAPPY:     return {EY_NORMAL, 1.0f, 0.00f, 0.0f, 0.22f, M_CAT};
     case F_SLEEPY: {
       MouthType m = ((now / 1000) % 9 < 2) ? M_YAWN : M_FLAT;
-      return {EY_NORMAL, 0.85f, 6, 0.45f, 0.0f, 0.0f, 2, m};
+      return {EY_NORMAL, 0.9f, 0.20f, -0.55f, 0.0f, m};      // tired lids
     }
-    case F_SLEEPING:  return {EY_CLOSED, 0.1f, 6, 0.0f, 0.0f, 0.0f, 0, M_TINY};
-    case F_SAD:       return {EY_NORMAL, 0.95f, 7, 0.12f, -0.9f, 0.0f, 3, M_FROWN};
-    case F_SURPRISED: return {EY_NORMAL, 1.18f, 3, 0.00f, 0.0f, 0.0f, 0, M_O};
-    case F_DIZZY:     return {EY_SPIRAL, 1.0f, 7, 0.0f, 0.0f, 0.0f, 0, M_WAVY};
-    case F_LOVE:      return {EY_ARC, 1.0f, 7, 0.0f, 0.0f, 0.0f, 0, M_CAT};
-    case F_PURR:      return {EY_ARC, 1.0f, 7, 0.0f, 0.0f, 0.0f, 0, M_CAT};
-    case F_LAUGH:     return {EY_ARC, 1.0f, 7, 0.0f, 0.0f, 0.0f, 0, M_BIG};
+    case F_SLEEPING:  return {EY_CLOSED, 0.1f, 0.0f, 0.0f, 0.0f, M_TINY};
+    case F_SURPRISED: return {EY_NORMAL, 1.18f, 0.00f, 0.0f, 0.0f, M_O};
+    case F_DIZZY:     return {EY_SPIRAL, 1.0f, 0.0f, 0.0f, 0.0f, M_WAVY};
+    case F_LOVE:      return {EY_HEART, 1.0f, 0.0f, 0.0f, 0.0f, M_CAT};
+    case F_PURR:      return {EY_ARC, 1.0f, 0.0f, 0.0f, 0.0f, M_CAT};
+    case F_LAUGH:     return {EY_ARC, 1.0f, 0.0f, 0.0f, 0.0f, M_BIG};
     case F_NEUTRAL:
-    default:          return {EY_NORMAL, 1.0f, 7, 0.0f, 0.0f, 0.0f, 0, M_SMILE};
+    default:          return {EY_NORMAL, 1.0f, 0.0f, 0.0f, 0.0f, M_SMILE};
   }
 }
 
@@ -447,23 +449,10 @@ void drawHearts(uint32_t now) {
 }
 
 // ---------------- Eye animation state ----------------
-float approach(float cur, float tgt, float k) { return cur + (tgt - cur) * k; }
-
-float eOpen = 1, ePupil = 7, eLid = 0, eSlant = 0, eLower = 0;
-float eLookX = 0, eLookY = 0, eBlink = 1, eWink = 1;
-
-uint32_t nextBlinkAt = 0, blinkUntil = 0;
-uint32_t nextWinkAt = 0, winkUntil = 0;
-uint32_t nextWanderAt = 0;
-int wanderX = 0, wanderY = 0;
+petface::EyeAnim eyeAnim;           // eased eyes, blinking, looking around (pet_face.cpp)
 uint32_t nextHeartAt = 0;
 
 using petface::EYE_Y; using petface::EYE_L_X; using petface::EYE_R_X; using petface::MOUTH_Y;
-
-void drawEye(int cx, int cy, int side, EyeStyle style, float open, float pupil,
-             float lid, float slant, float lower, int lx, int ly, uint32_t now) {
-  petface::drawEye(display, cx, cy, side, style, open, pupil, lid, slant, lower, lx, ly, now);
-}
 
 void drawMouth(MouthType m, int y, uint32_t now, int dx = 0) { petface::drawMouth(display, m, y, now, dx); }
 
@@ -499,8 +488,7 @@ void drawPet(uint32_t now) {
       music = true;
       mp = petmusic::pose(mus, now);
       face = F_NEUTRAL;                                  // no sleepy / sad face while the music plays
-      p.style = mp.eye; p.open = mp.open; p.pupil = mp.pupil; p.lid = mp.lid; p.slant = mp.slant; p.lower = mp.lower;
-      p.lookBiasY = mp.lookY; p.mouth = mp.mouth;
+      p.style = mp.eye; p.open = mp.open; p.lid = mp.lid; p.slant = mp.slant; p.lower = mp.lower; p.mouth = mp.mouth;
     }
   }
   petMusicPlaying = music;
@@ -510,43 +498,13 @@ void drawPet(uint32_t now) {
   bool strolling = !music && !cheer && now >= overlayUntil && steps::walking(stepDet, now) && face != F_SLEEPING;
   if (strolling) { face = F_HAPPY; p = faceParams(F_HAPPY, now); }
 
-  // Blink and wink (only when the eyes are open and normal).
-  bool normalEyes = (p.style == EY_NORMAL);
-  if (normalEyes && now >= nextBlinkAt) {
-    blinkUntil = now + 130;
-    nextBlinkAt = now + random(2500, 5500);
-    if (random(6) == 0) nextBlinkAt = now + 260;   // sometimes a quick double blink
-  }
-  if (normalEyes && (face == F_NEUTRAL || face == F_HAPPY) && now >= nextWinkAt) {
-    winkUntil = now + 300;
-    nextWinkAt = now + random(12000, 30000);
-  }
-  eBlink = approach(eBlink, now < blinkUntil ? 0.05f : 1.0f, 0.6f);
-  eWink = approach(eWink, now < winkUntil ? 0.05f : 1.0f, 0.6f);
-
-  // Eye shape eases toward the mood's target so changes feel smooth.
-  eOpen = approach(eOpen, p.open, 0.22f);
-  ePupil = approach(ePupil, p.pupil, 0.22f);
-  eLid = approach(eLid, p.lid, 0.22f);
-  eSlant = approach(eSlant, p.slant, 0.22f);
-  eLower = approach(eLower, p.lower, 0.22f);
-
-  // Where the pupils look: tilt wins, otherwise wander around now and then.
+  // Eyes ease toward the mood, blink, and wander or follow the tilt (all in pet_face.cpp).
+  petface::Target tgt;
+  tgt.style = p.style; tgt.open = p.open; tgt.lid = p.lid; tgt.slant = p.slant; tgt.lower = p.lower;
   float tx, ty;
   petTilt(tx, ty);
   bool tilted = (fabsf(tx) + fabsf(ty)) > 2.0f;
-  if (!tilted) {
-    if (now >= nextWanderAt) {
-      wanderX = random(-6, 7);
-      wanderY = random(-4, 5);
-      if (random(3) == 0) { wanderX = 0; wanderY = 0; }
-      nextWanderAt = now + random(900, 2600);
-    }
-    tx = wanderX;
-    ty = wanderY;
-  }
-  eLookX = approach(eLookX, tx, 0.3f);
-  eLookY = approach(eLookY, ty + p.lookBiasY, 0.3f);
+  eyeAnim.update(now, tgt, tilted, tx, ty, face == F_NEUTRAL || face == F_HAPPY);
 
   // Gentle breathing bob, jitter while laughing.
   int bob = (int)roundf(sinf(now / (face == F_SLEEPING ? 900.0f : 650.0f)) * 1.3f);
@@ -563,10 +521,7 @@ void drawPet(uint32_t now) {
     nextHeartAt = now + 320;
   }
 
-  int lx = (int)roundf(eLookX);
-  int ly = (int)roundf(eLookY);
-  drawEye(EYE_L_X + mdx, cy, -1, p.style, eOpen * eBlink, ePupil, eLid, eSlant, eLower, lx, ly, now);
-  drawEye(EYE_R_X + mdx, cy, +1, p.style, eOpen * eBlink * eWink, ePupil, eLid, eSlant, eLower, lx, ly, now);
+  eyeAnim.draw(display, mdx, cy, now);
   drawMouth(p.mouth, MOUTH_Y + bob + mdy, now, mdx);
   drawHearts(now);
   if (music) petmusic::decor(display, mus, mp, cy, now);
@@ -1124,7 +1079,7 @@ void drawStats() {
   if (statsPage == 1) { drawSteps(millis()); return; }
 
   if (statsPage == 0) {
-    drawBar(22, "Happy", pet.happy);
+    drawBar(22, "Mood", pet.happy);
     drawBar(36, "Energy", pet.energy);
     display.setFont(u8g2_font_6x10_tf);
     snprintf(line, sizeof(line), "Pets: %lu", (unsigned long)pet.pets);
@@ -1364,8 +1319,9 @@ void setup() {
 
   randomSeed(micros());
   uint32_t now = millis();
-  nextBlinkAt = now + 3000;
-  nextWinkAt = now + 15000;
+  eyeAnim.nextBlinkAt = now + 3000;
+  eyeAnim.nextWinkAt = now + 15000;
+  eyeAnim.rng ^= micros();
   lastActivity = lastInteraction = now;
   {
     char mem[96];
@@ -1429,7 +1385,10 @@ void loop() {
     screenOff = true;
     display.setPowerSave(1);
   }
-  if (a || b || c || touchDown) lastInteraction = lastActivity = now;
+  if (a || b || c || touchDown) {
+    if (now - lastInteraction > 600000UL) greetPending = true;    // away 10+ minutes: the pet is happy you are back
+    lastInteraction = lastActivity = now;
+  }
 
   // The touch pad only works in Pet mode (petting). It used to double as Home, but it misfired too often.
 
@@ -1494,7 +1453,6 @@ void loop() {
       if (mode == MODE_PET) {
         if (spin > 400.0f) {
           bool alreadyDizzy = (overlay == OV_DIZZY && now < overlayUntil);
-          if (!alreadyDizzy) addHappy(-3);   // being shaken is not fun
           trigger(OV_DIZZY, 1800);
         } else if (dev > 0.6f) {
           // Picked up fast, bumped, or dropped.
@@ -1509,6 +1467,7 @@ void loop() {
   }
 
   if (cheerPending && mode == MODE_PET) { cheerPending = false; trigger(OV_CHEER, 4500); }
+  else if (greetPending && mode == MODE_PET) { greetPending = false; trigger(OV_LOVE, 2800); addHappy(5); }
 
   // Touch petting: tap = love, hold = purr.
   if (mode == MODE_PET) {

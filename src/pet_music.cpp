@@ -128,7 +128,7 @@ Pose pose(const vibe::Music &m, uint32_t now) {
   (void)now;
   using namespace petface;
   Pose p = {};
-  p.eye = EY_NORMAL; p.open = 1.0f; p.pupil = 7; p.lid = 0; p.slant = 0; p.lower = 0; p.lookY = 0; p.mouth = M_SMILE;
+  p.eye = EY_NORMAL; p.open = 1.0f; p.lid = 0; p.slant = 0; p.lower = 0; p.mouth = M_SMILE;
 
   uint32_t beat = m.beatMs ? m.beatMs : 600;
   uint32_t pos = m.positionMs;
@@ -157,19 +157,19 @@ Pose pose(const vibe::Music &m, uint32_t now) {
       p.dx = (int8_t)lroundf(sway * 2);
       break;
     case vibe::V_HYPE:                                        // shades on, head nods on the beat
-      p.open = 0.9f; p.pupil = 6; p.lid = 0.3f; p.slant = 0.25f;
+      p.open = 0.9f; p.lid = 0.3f; p.slant = 0.25f;
       p.mouth = flap ? M_O : M_FLAT;
       p.dy = (int8_t)bounce(5);
       p.shades = true;
       break;
     case vibe::V_ROCK:                                        // angry eyes, headbanging
-      p.pupil = 5; p.lid = 0.1f; p.slant = 0.9f;
+      p.lid = 0.1f; p.slant = 0.9f;
       p.mouth = (flap || hit > 0.25f) ? M_BIG : M_FLAT;
       p.dy = (int8_t)bounce(6);
       p.dx = (int8_t)(((bar & 1) ? 1 : -1) * (int)lroundf(hit * 3 * amp));
       break;
-    case vibe::V_EDM:                                         // pupils pulse, strobe on the first beat of a bar
-      p.open = 1.15f; p.pupil = 3 + hit * 5;
+    case vibe::V_EDM:                                         // eyes pulse with the beat, strobe on the first beat of a bar
+      p.open = 0.85f + hit * 0.3f;
       p.mouth = M_BIG;
       p.dy = (int8_t)-bounce(3);
       p.flash = (bar == 0 && (pos % beat) < 45);
@@ -180,8 +180,8 @@ Pose pose(const vibe::Music &m, uint32_t now) {
       p.dx = (int8_t)lroundf(sway * 6);
       p.dy = (int8_t)lroundf(slow * 2);
       break;
-    case vibe::V_DREAMY:                                      // big starry-eyed pupils, slow sway
-      p.open = 1.0f; p.pupil = 10; p.lid = 0; p.lookY = 0;
+    case vibe::V_DREAMY:                                      // starry eyes, slow sway
+      p.eye = EY_STAR; p.open = 1.0f;
       p.mouth = flap ? M_O : M_SMILE;
       p.dx = (int8_t)lroundf(sway * 3);
       p.dy = (int8_t)lroundf(slow * 1.5f);

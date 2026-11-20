@@ -32,9 +32,11 @@ static void pet(bool cheer, int cad, uint32_t now, uint32_t sinceStep) {
   if (!cheer) mdy = sinceStep < 70 ? -2 : (sinceStep < 150 ? -1 : 0);
   else mdy = -(int)(fabsf(sinf(now / 130.0f)) * 5);
   int cy = EYE_Y + mdy;
-  EyeStyle st = cheer ? EY_ARC : EY_NORMAL;
-  drawEye(display, EYE_L_X, cy, -1, st, 1.0f, cheer ? 7 : 8, 0, 0, cheer ? 0 : 0.22f, 0, 0, now);
-  drawEye(display, EYE_R_X, cy, +1, st, 1.0f, cheer ? 7 : 8, 0, 0, cheer ? 0 : 0.22f, 0, 0, now);
+  static EyeAnim anim;
+  Target t; t.style = cheer ? EY_ARC : EY_NORMAL; t.lower = cheer ? 0 : 0.22f;
+  for (int i = 0; i < 20; ++i) anim.update(now - (20 - i) * 40, t, true, 0, 0, false);
+  anim.blink = 1;
+  anim.draw(display, 0, cy, now);
   drawMouth(display, cheer ? M_BIG : M_CAT, MOUTH_Y + mdy, now, 0);
   if (cheer) stepsview::decorCheer(display, 0, now);
   else stepsview::decorWalk(display, cy, EYE_R_X, cad, now);

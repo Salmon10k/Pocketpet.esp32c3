@@ -11,8 +11,7 @@ namespace petmusic {
 
 struct Pose {
   petface::EyeStyle eye;
-  float open, pupil, lid, slant, lower;
-  int8_t lookY;
+  float open, lid, slant, lower;
   petface::MouthType mouth;
   int8_t dx, dy;          // the whole face moves by this much (sway / bounce / headbang)
   bool shades;            // drawn by decor()

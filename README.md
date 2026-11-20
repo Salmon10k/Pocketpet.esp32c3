@@ -124,11 +124,12 @@ An ambient screensaver: six animated scenes (flow, orbit, field, rain, mesh, ter
 Particle water simulation that follows tilt. Hold the device like a phone, it calibrates for half a second (that pose counts as level). A = re-zero, C = Water / Honey / Mercury, B = back.
 
 ### Pet mode (companion style, nothing can die)
-- Eyes ease smoothly between moods, blink on their own, sometimes double-blink or wink, and wander around when idle.
-- Pupils follow tilt from the MPU6050.
-- **Moods:** neutral, happy, sad (when ignored), sleepy (low energy or no activity for 30 s), asleep (no activity for 60 s, with floating Zzz).
+- **RoboEyes-style eyes** (own implementation in `src/pet_face.cpp`, no library needed): solid rounded eyes with no pupils, eased movement, random blinks (sometimes double), the odd wink, and the eyes slide around when idle or follow the tilt. When it looks sideways the outer eye grows a little (curious). Tired lids when sleepy, angry lids for rock, rounded "hump" eyes when happy. The things RoboEyes does not have are drawn in the same style: spiral eyes (dizzy), heart eyes (love), star eyes (dreamy), the mouths, hearts and Zzz.
+![Pet expressions: neutral, happy, tired, asleep, surprised, dizzy, love, laugh, curious left/right, angry, starry, and the five growth sizes](docs/images/pet-faces.png)
+
+- **Moods:** neutral, happy, sleepy (low energy or no activity for 30 s, tired lids and yawns), asleep (no activity for 60 s, with floating Zzz). **The pet never gets sad:** ignoring it does not hurt, it just falls asleep, and after 10+ minutes away it is delighted to see you (heart eyes). Happiness (the Mood bar, never below 40) goes up from petting, steps, music and your daily goal and settles back to a calm baseline; a good day of steps yesterday and steps so far today raise that baseline.
 - **Touch:** tap = love face and hearts. Hold the pad for 0.6 s = purr, which keeps raising happiness.
-- **Motion:** shake = dizzy spiral eyes (and a small happiness drop). A sharp pickup, bump or drop = surprised.
+- **Motion:** shake = dizzy spiral eyes. A sharp pickup, bump or drop = surprised.
 - **Buttons in Pet mode:** A = tickle (laughs), C = boop (surprised), B = back to the menu.
 - Any touch, button press or movement wakes it up.
 - **Music pet (Settings > Music pet, default On):** while Spotify is playing, Pet mode quietly opens a Spotify session (Wi-Fi, so it costs battery; it drops when the screen turns off or you leave Pet mode) and the pet dances to the song. The reaction depends on the vibe: **Chill** (eyes closed, headphones, slow sway), **Pop** (happy eyes, bounce, notes and sparkles), **Hype** (shades, head nods, impact lines), **Rock** (angry eyes, headbang, lightning), **EDM** (big pulsing pupils, equalizer, strobe on the bar), **Desi** (dreamy eyes, wide sway, hearts), **Dreamy** (starry eyes, twinkles). The mouth flaps on sung words. The vibe name flashes briefly when a track starts; a trailing **?** means it was guessed (no genre data) from the title and lyric speed. The beat is a steady feel-tempo per vibe locked to the song position, not the song's real BPM (Spotify no longer gives tempo).
@@ -194,7 +195,7 @@ When changing wiring, update `src/config.h` first.
 - [x] Improved pet mode: moods, eased eyes, touch petting, motion reactions, sleep, hearts, Zzz
 - [x] Stats screen with flash-saved happiness and energy
 - [x] Verify the firmware on hardware (everything up to 2026-11-15)
-- [ ] Try the RoboEyes library for the eyes (optional, only if the current look is not liked)
+- [x] RoboEyes-style eyes (own implementation, see Pet mode)
 - [x] Temperature mode
 - [x] Game mode (Magic 8-ball + Dice)
 - [x] Games: Star Blaster, Sniper, Road Rush, Pinball, Breakout, Asteroids, Stack, Quick Draw, generated Tilt Maze, tilt Snake (verified on the device 2026-11-15)

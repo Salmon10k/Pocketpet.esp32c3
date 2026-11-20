@@ -13,16 +13,31 @@ U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
 static std::string OUTDIR = "/tmp/pocketpet-petpreview";
 static FILE *openOut(const char *n) { std::string p = OUTDIR + "/" + n; FILE *f = fopen(p.c_str(), "wb"); if (!f) { perror(p.c_str()); exit(1); } return f; }
 
-// What drawPet() in main.cpp does for a dancing pet (no blinking / wandering pupils here).
+// What drawPet() in main.cpp does for a dancing pet: the eyes ease toward the pose (settled here by running the animation first).
 static void drawDancing(const vibe::Music &m, uint32_t now) {
   using namespace petface;
   display.clearBuffer();
   petmusic::Pose p = petmusic::pose(m, now);
+  static EyeAnim anim;
+  Target t; t.style = p.eye; t.open = p.open; t.lid = p.lid; t.slant = p.slant; t.lower = p.lower;
+  for (int i = 0; i < 12; ++i) anim.update(now - (12 - i) * 40, t, true, 0, 0, false);
+  anim.blink = 1; anim.wink = 1; anim.lookX = anim.lookY = 0;
   int cy = EYE_Y + p.dy;
-  drawEye(display, EYE_L_X + p.dx, cy, -1, p.eye, p.open, p.pupil, p.lid, p.slant, p.lower, 0, p.lookY, now);
-  drawEye(display, EYE_R_X + p.dx, cy, +1, p.eye, p.open, p.pupil, p.lid, p.slant, p.lower, 0, p.lookY, now);
+  anim.draw(display, p.dx, cy, now);
   drawMouth(display, p.mouth, MOUTH_Y + p.dy, now, p.dx);
   petmusic::decor(display, m, p, cy, now);
+}
+
+// Sheet of every expression, and the five growth stages.
+static void drawFace(petface::EyeStyle st, float open, float lid, float slant, float lower, petface::MouthType mo, float lookX, float lookY, uint32_t now) {
+  using namespace petface;
+  display.clearBuffer();
+  static EyeAnim anim;
+  Target t; t.style = st; t.open = open; t.lid = lid; t.slant = slant; t.lower = lower;
+  for (int i = 0; i < 25; ++i) anim.update(now - (25 - i) * 40, t, true, lookX, lookY, false);
+  anim.blink = 1; anim.wink = 1;
+  anim.draw(display, 0, EYE_Y, now);
+  drawMouth(display, mo, MOUTH_Y, now, 0);
 }
 
 static vibe::Music make(vibe::Vibe v, int pace10, uint32_t pos, bool singing, int word, bool guessed) {
@@ -37,6 +52,28 @@ static vibe::Music make(vibe::Vibe v, int pace10, uint32_t pos, bool singing, in
 int main(int argc, char **argv) {
   if (argc > 1) OUTDIR = argv[1];
   display.begin();
+  {
+    using namespace petface;
+    FILE *f = openOut("faces.bin");
+    struct F { EyeStyle st; float o, l, sl, lo; MouthType m; float lx, ly; } faces[] = {
+      {EY_NORMAL, 1, 0, 0, 0, M_SMILE, 0, 0},        // neutral
+      {EY_NORMAL, 1, 0, 0, 0.22f, M_CAT, 0, 0},      // happy
+      {EY_NORMAL, 0.9f, 0.2f, -0.55f, 0, M_FLAT, 0, 0},   // sleepy (tired lids)
+      {EY_CLOSED, 0.1f, 0, 0, 0, M_TINY, 0, 0},      // sleeping
+      {EY_NORMAL, 1.18f, 0, 0, 0, M_O, 0, 0},        // surprised
+      {EY_SPIRAL, 1, 0, 0, 0, M_WAVY, 0, 0},         // dizzy
+      {EY_HEART, 1, 0, 0, 0, M_CAT, 0, 0},           // love
+      {EY_ARC, 1, 0, 0, 0, M_BIG, 0, 0},             // laugh / purr
+      {EY_NORMAL, 1, 0, 0, 0, M_SMILE, -9, -3},      // looking left: the left eye grows (curious)
+      {EY_NORMAL, 1, 0, 0, 0, M_SMILE, 9, 2},        // looking right
+      {EY_NORMAL, 0.9f, 0.1f, 0.9f, 0, M_FLAT, 0, 0},     // angry (rock)
+      {EY_STAR, 1, 0, 0, 0, M_SMILE, 0, 0},          // starry (dreamy)
+    };
+    for (auto &x : faces) { drawFace(x.st, x.o, x.l, x.sl, x.lo, x.m, x.lx, x.ly, 5000); fwrite(display.getBufferPtr(), 1, 1024, f); }
+    for (int stg = 0; stg < 5; ++stg) { setStage(stg); drawFace(EY_NORMAL, 1, 0, 0, 0.22f, M_CAT, 0, 0, 5000); fwrite(display.getBufferPtr(), 1, 1024, f); }
+    setStage(1);
+    fclose(f);
+  }
   const int paces[vibe::V_COUNT] = {35, 20, 38, 60, 40, 45, 38, 28};      // typical lyric speed per vibe (x10)
   // 1) the label that shows for a moment when the vibe is known (first frame after a change), "?" = guessed
   {
