@@ -1,5 +1,6 @@
 // PC test for src/steps.cpp: simulated walking / jogging / shaking / idle / fidgeting.
 #include "../../src/steps.h"
+#include "../../src/progress.h"
 #include <cstdio>
 #include <cmath>
 #include <cstdlib>
@@ -68,6 +69,31 @@ int main() {
     h.cnt[0] = 7; steps::rollTo(h, 103); CHECK(h.cnt[0] == 0 && h.cnt[1] == 0 && h.cnt[2] == 7 && h.cnt[3] == 500, "roll 2");
     steps::rollTo(h, 110); CHECK(steps::weekTotal(h) == 0, "roll > week clears");
     steps::rollTo(h, 50); CHECK(h.day == 110, "clock going backwards ignored"); }
+
+  // Progress: stages, streaks, badges.
+  { progress::Data d;
+    CHECK(progress::stage(0) == 0 && progress::stage(299) == 0 && progress::stage(300) == 1 && progress::stage(7000) == 4 && progress::stage(999999) == 4, "stage thresholds");
+    CHECK(progress::stageCeil(0) == 300 && progress::stageCeil(4) == 7000, "stage ceil");
+    d.lifeSteps = 6000; CHECK(progress::xp(d, 10) == 140, "xp %u", progress::xp(d, 10));
+    d.lifeSteps = 0; CHECK(progress::evaluate(d, 0, 50) == 0, "nothing yet");
+    d.lifeSteps = 120; uint32_t f = progress::evaluate(d, 0, 120);
+    CHECK(f == (1u << progress::B_FIRST), "first steps only (%x)", f);
+    CHECK(progress::evaluate(d, 0, 120) == 0, "badges only fire once");
+    progress::goalReached(d); progress::dayEnded(d, true, 1); progress::goalReached(d);
+    CHECK(d.streak == 2 && d.bestStreak == 2, "streak builds %d", d.streak);
+    progress::dayEnded(d, true, 1); progress::goalReached(d);
+    CHECK(d.streak == 3, "streak 3");
+    CHECK((progress::evaluate(d, 0, 6000) & (1u << progress::B_STREAK3)), "streak3 badge");
+    progress::dayEnded(d, true, 2);
+    CHECK(d.streak == 0 && d.bestStreak == 3, "a missed day resets");
+    progress::dayEnded(d, false, 1); CHECK(d.streak == 0, "goal not met resets");
+    d.lifeSteps = 200000; d.songs = 3; d.games = 12; d.focus = 6; d.bestDay = 12000;
+    progress::evaluate(d, 1500, 0);
+    CHECK(progress::has(d, progress::B_LIFE100K) && progress::has(d, progress::B_PETS1000) && progress::has(d, progress::B_TENK) && progress::has(d, progress::B_GIGA), "big numbers");
+    d.bestStreak = 7; progress::evaluate(d, 1500, 0);
+    CHECK(progress::has(d, progress::B_ALL) && progress::badgeCount(d) == progress::COUNT, "collector at %d", progress::badgeCount(d));
+    for (int b = 0; b < progress::COUNT; ++b) CHECK(progress::badgeName(b)[0] && progress::badgeHint(b)[0], "badge text %d", b);
+  }
 
   printf(fails ? "\n%d FAILED\n" : "\nall step tests passed\n", fails);
   return fails ? 1 : 0;

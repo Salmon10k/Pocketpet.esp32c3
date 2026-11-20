@@ -13,15 +13,14 @@ static std::string OUTDIR = "/tmp/pocketpet-stepview";
 static FILE *openOut(const char *n) { std::string p = OUTDIR + "/" + n; FILE *f = fopen(p.c_str(), "wb"); if (!f) { perror(p.c_str()); exit(1); } return f; }
 static void dump(FILE *f) { fwrite(display.getBufferPtr(), 1, 1024, f); }
 
-static void page(const steps::History &h, uint32_t goal, bool walking, int cad, bool clockOk, bool flash, uint32_t now, bool dots = true) {
+static void page(const steps::History &h, uint32_t goal, bool walking, int cad, bool clockOk, bool flash, uint32_t now, int streak = 0) {
   display.clearBuffer();
   display.setFont(u8g2_font_7x13B_tf);
   display.drawStr(0, 12, "STEPS");
   for (int i = 0; i < 3; ++i) { if (i == 1) display.drawDisc(108 + i * 6, 8, 2); else display.drawCircle(108 + i * 6, 8, 2); }
   display.drawHLine(0, 15, 128);
-  stepsview::Info in; in.h = &h; in.goal = goal; in.walking = walking; in.cadence = cad; in.clockOk = clockOk; in.flash = flash;
+  stepsview::Info in; in.h = &h; in.goal = goal; in.walking = walking; in.cadence = cad; in.clockOk = clockOk; in.flash = flash; in.streak = streak;
   stepsview::draw(display, in, now);
-  (void)dots;
 }
 
 // The pet as drawPet() draws it while strolling / celebrating (happy face, no blink).
@@ -54,7 +53,21 @@ int main(int argc, char **argv) {
   page(h, 6000, true, 112, true, false, 1000); dump(f);                                // walking (text on)
   page(h, 6000, true, 112, true, false, 1100); dump(f);                                // walking, feet other way
   { steps::History g = h; g.cnt[0] = 6000; page(g, 6000, false, 0, true, true, 1000); dump(f); page(g, 6000, false, 0, true, false, 1000); dump(f); }   // goal hit, flash on/off
+  page(h, 6000, false, 0, true, false, 1000, 5); dump(f);                              // with a 5-day streak
   { steps::History b = h; b.cnt[0] = 14250; b.cnt[3] = 18000; page(b, 10000, false, 0, true, false, 1000); dump(f); }  // 5-digit numbers
+  fclose(f);
+  f = openOut("badges.bin");
+  {
+    progress::Data p;
+    for (int n : {0, 3, 9, 16}) {
+      p.badges = n >= 16 ? 0xFFFFu : ((1u << n) - 1) | (n == 9 ? 0x8000u : 0);
+      display.clearBuffer();
+      display.setFont(u8g2_font_7x13B_tf); display.drawStr(0, 12, "BADGES"); display.drawHLine(0, 15, 128);
+      stepsview::badges(display, p, 2200u * (n % 16)); dump(f);
+    }
+    display.clearBuffer();                                                            // toasts: sliding in, shown, sliding out
+    for (uint32_t age : {60u, 125u, 1500u, 3300u}) { display.clearBuffer(); stepsview::toast(display, "NEW BADGE", "Dancer", age); dump(f); }
+  }
   fclose(f);
   f = openOut("pet.bin");
   for (int i = 0; i < 4; ++i) { pet(false, 110, 1000 + i * 70, i * 70); dump(f); }

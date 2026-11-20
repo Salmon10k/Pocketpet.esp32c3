@@ -15,7 +15,7 @@ if [ ! -f "$OUT/obj/.done" ]; then
   touch "$OUT/obj/.done"
 fi
 g++ -std=gnu++17 -O1 -w $SAN -I "$ROOT/src" -I "$HERE/../hostcheck" -I "$LIBS/u8g2/cppsrc" -I "$LIBS/u8g2/csrc" \
-  "$HERE/preview.cpp" "$ROOT/src/steps.cpp" "$ROOT/src/steps_view.cpp" "$ROOT/src/pet_face.cpp" "$ROOT/src/gfx.cpp" \
+  "$HERE/preview.cpp" "$ROOT/src/steps.cpp" "$ROOT/src/progress.cpp" "$ROOT/src/steps_view.cpp" "$ROOT/src/pet_face.cpp" "$ROOT/src/gfx.cpp" \
   "$LIBS/u8g2/cppsrc/U8g2lib.cpp" "$LIBS/u8g2/cppsrc/U8x8lib.cpp" "$HERE/../gamepreview/stubs.cpp" "$OUT"/obj/*.o -o "$OUT/steppreview"
 mkdir -p "${1:-/tmp/pocketpet-stepview}"
 "$OUT/steppreview" "${1:-/tmp/pocketpet-stepview}"

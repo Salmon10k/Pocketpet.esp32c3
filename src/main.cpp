@@ -12,6 +12,7 @@
 #include "living_oled.h"
 #include "launcher.h"
 #include "steps.h"
+#include "progress.h"
 #include "steps_view.h"
 #include "games.h"
 #include "pet_face.h"
@@ -207,6 +208,15 @@ steps::Detector stepDet;
 steps::History stepHist;                 // today + 6 days back, saved to flash as one small blob
 uint32_t stepSavedToday = 0, stepLastSave = 0, stepHappyAcc = 0, offlineDayAt = 0, goalFlashUntil = 0;
 bool goalDone = false, cheerPending = false;
+progress::Data prog;                     // XP inputs, streak, badges (one flash blob, see loadSteps)
+bool progDirty = false;
+int petStage = 1;                        // growth stage 0..4 (Bit, Byte, Kilo, Mega, Giga)
+const char *cheerText = "GOAL!";
+// Toasts: a small banner that slides in from the top for a few seconds (new badge, growth).
+struct Toast { char l1[16]; char l2[20]; };
+Toast toastQ[4];
+int toastN = 0;
+uint32_t toastStart = 0;
 
 // ---------------- Settings (saved to flash) ----------------
 const uint8_t BRIGHT_LEVELS[] = {8, 60, 150, 255};
@@ -303,6 +313,25 @@ void loadSteps() {
   stepSavedToday = stepHist.cnt[0];
   goalDone = stepHist.cnt[0] >= STEP_GOALS[setGoal];
   steps::reset(stepDet);
+  if (prefs.getBytesLength("prog") == sizeof(prog)) {
+    progress::Data d;
+    prefs.getBytes("prog", &d, sizeof(d));
+    if (d.magic == prog.magic) prog = d;
+  }
+  petStage = progress::stage(progress::xp(prog, pet.pets));
+  petface::setStage(petStage);
+}
+
+void saveProg() {
+  prefs.putBytes("prog", &prog, sizeof(prog));
+  progDirty = false;
+}
+
+void pushToast(const char *l1, const char *l2) {
+  if (toastN >= 4) return;
+  snprintf(toastQ[toastN].l1, sizeof(toastQ[toastN].l1), "%s", l1);
+  snprintf(toastQ[toastN].l2, sizeof(toastQ[toastN].l2), "%s", l2);
+  toastN++;
 }
 
 // Flash writes are rationed: every 100 steps or 5 minutes, whichever comes first (and on a new day / goal).
@@ -313,6 +342,7 @@ void saveSteps(bool force) {
   prefs.putBytes("stepH", &stepHist, sizeof(stepHist));
   stepSavedToday = stepHist.cnt[0];
   stepLastSave = now;
+  if (progDirty) saveProg();
 }
 
 // Once a second: new day? With a synced clock the date decides; without one the day rolls after 24 h of uptime.
@@ -321,6 +351,8 @@ void stepsDayTick(uint32_t now) {
     int32_t today = todayNumber();
     if (today != stepHist.day) {
       bool first = (stepHist.day == 0);
+      int passed = first ? 1 : (int)(today - stepHist.day);
+      if (!first) { progress::dayEnded(prog, goalDone, passed < 1 ? 1 : passed); progDirty = true; }
       steps::rollTo(stepHist, today);
       if (!first) { goalDone = false; cheerPending = false; }
       saveSteps(true);
@@ -329,6 +361,8 @@ void stepsDayTick(uint32_t now) {
   } else if (now - offlineDayAt >= 86400000UL) {
     offlineDayAt = now;
     int32_t d = stepHist.day;
+    progress::dayEnded(prog, goalDone, 1);
+    progDirty = true;
     steps::rollTo(stepHist, (d ? d : 1) + 1);         // keeps the shifted days; the date is fixed on the next sync
     if (!d) stepHist.day = 0;
     goalDone = false; cheerPending = false;
@@ -338,15 +372,43 @@ void stepsDayTick(uint32_t now) {
 
 void onSteps(int n, uint32_t now) {
   stepHist.cnt[0] += n;
+  prog.lifeSteps += n;
+  progDirty = true;
   stepHappyAcc += n;
   while (stepHappyAcc >= 50) { stepHappyAcc -= 50; addHappy(1); }     // walking makes the pet happy
   if (!goalDone && stepHist.cnt[0] >= STEP_GOALS[setGoal]) {
     goalDone = true;
     cheerPending = true;
+    cheerText = "GOAL!";
+    progress::goalReached(prog);
     goalFlashUntil = now + 6000;
     addHappy(15);
     saveSteps(true);
   }
+}
+
+// Once a second: badges, growth stage. New things pop up as toasts; growth also gets the confetti jump.
+void progressTick(uint32_t now) {
+  static uint32_t lastProgSave = 0;
+  uint32_t fresh = progress::evaluate(prog, pet.pets, stepHist.cnt[0]);
+  int st = progress::stage(progress::xp(prog, pet.pets));
+  bool grew = false;
+  if (st != petStage) {
+    grew = true;
+    bool up = st > petStage;
+    petStage = st;
+    petface::setStage(st);
+    if (up) {
+      pushToast("GREW UP!", progress::stageName(st));
+      cheerPending = true;
+      cheerText = "LEVEL UP!";
+      addHappy(10);
+    }
+  }
+  for (int b = 0; b < progress::COUNT; ++b)
+    if (fresh & (1u << b)) { pushToast("NEW BADGE", progress::badgeName(b)); addHappy(3); }
+  if (fresh || grew) progDirty = true;
+  if (progDirty && (fresh || grew || now - lastProgSave > 300000UL)) { saveProg(); lastProgSave = now; }   // rare writes
 }
 
 enum Face {
@@ -482,6 +544,7 @@ void drawPet(uint32_t now) {
     if (mus.trackSeq != seenSeq) {
       bool firstTrack = (seenSeq == 0);
       seenSeq = mus.trackSeq;
+      prog.songs++; progDirty = true;
       if (!firstTrack) { trigger(OV_SURPRISED, 700); face = currentFace(now); p = faceParams(face, now); }
     }
     if (now >= overlayUntil) {
@@ -526,7 +589,7 @@ void drawPet(uint32_t now) {
   drawHearts(now);
   if (music) petmusic::decor(display, mus, mp, cy, now);
   if (strolling) stepsview::decorWalk(display, cy, EYE_R_X, steps::cadence(stepDet, now), now);
-  if (cheer) stepsview::decorCheer(display, overlayUntil - 4500, now);
+  if (cheer) stepsview::decorCheer(display, overlayUntil - 4500, now, cheerText);
   if (face == F_SLEEPING) drawZzz(now);
 }
 
@@ -1054,6 +1117,7 @@ const char *resetReasonText() {
 // loop Hz = how often loop() runs (the main loop yields with delay(1), so a few hundred is normal).
 uint32_t dbgFrames = 0, dbgLoops = 0, dbgAt = 0;
 uint16_t dbgFps = 0, dbgLoopHz = 0;
+const int STATS_PAGES = 4;                // pet, steps, badges, system
 int statsPage = 0;                       // 0 = pet stats, 1 = steps, 2 = system numbers (A / C flip the page)
 
 void drawSteps(uint32_t now) {
@@ -1064,32 +1128,58 @@ void drawSteps(uint32_t now) {
   in.cadence = steps::cadence(stepDet, now);
   in.clockOk = clockValid();
   in.flash = now < goalFlashUntil && ((now / 200) & 1);
+  in.streak = prog.streak;
   stepsview::draw(display, in, now);
+}
+
+// Toast banner: slides down from the top, stays ~3 s. Called after the screen is drawn; only in calm screens.
+void drawToast(uint32_t now) {
+  if (!toastN) return;
+  if (!toastStart) toastStart = now ? now : 1;
+  uint32_t age = now - toastStart;
+  if (age > 3400) {                                                  // next one
+    for (int i = 1; i < toastN; ++i) toastQ[i - 1] = toastQ[i];
+    toastN--;
+    toastStart = 0;
+    return;
+  }
+  stepsview::toast(display, toastQ[0].l1, toastQ[0].l2, age);
 }
 
 void drawStats() {
   char line[32];
   display.setFont(u8g2_font_7x13B_tf);
-  display.drawStr(0, 12, statsPage == 0 ? "STATS" : (statsPage == 1 ? "STEPS" : "SYSTEM"));
-  for (int i = 0; i < 3; ++i) {                                       // page dots
-    if (i == statsPage) display.drawDisc(108 + i * 6, 8, 2);
-    else display.drawCircle(108 + i * 6, 8, 2);
+  static const char *const PAGE_TITLES[STATS_PAGES] = {"STATS", "STEPS", "BADGES", "SYSTEM"};
+  display.drawStr(0, 12, PAGE_TITLES[statsPage]);
+  for (int i = 0; i < STATS_PAGES; ++i) {                             // page dots
+    if (i == statsPage) display.drawDisc(102 + i * 6, 8, 2);
+    else display.drawCircle(102 + i * 6, 8, 2);
   }
   display.drawHLine(0, 15, 128);
   if (statsPage == 1) { drawSteps(millis()); return; }
 
   if (statsPage == 0) {
-    drawBar(22, "Mood", pet.happy);
-    drawBar(36, "Energy", pet.energy);
-    display.setFont(u8g2_font_6x10_tf);
-    snprintf(line, sizeof(line), "Pets: %lu", (unsigned long)pet.pets);
-    display.drawStr(0, 60, line);
-    char rr[24];
-    snprintf(rr, sizeof(rr), "boot: %s", resetReasonText());
+    drawBar(19, "Mood", pet.happy);
+    drawBar(31, "Energy", pet.energy);
+    {   // growth: stage name, XP bar to the next stage
+      uint32_t x = progress::xp(prog, pet.pets), lo = progress::stageFloor(petStage), hi = progress::stageCeil(petStage);
+      float frac = hi > lo ? (float)(x - lo) / (float)(hi - lo) : 1.0f;
+      if (frac > 1) frac = 1;
+      display.setFont(u8g2_font_6x10_tf);
+      display.drawStr(0, 51, progress::stageName(petStage));
+      display.drawFrame(44, 43, 60, 9);
+      display.drawBox(46, 45, (int)(56.0f * frac), 5);
+      snprintf(line, sizeof(line), "%d", petStage + 1);
+      display.drawStr(108, 51, line);
+    }
     display.setFont(u8g2_font_5x7_tf);
-    display.drawStr(128 - display.getStrWidth(rr), 60, rr);
+    snprintf(line, sizeof(line), "Pets %lu", (unsigned long)pet.pets);
+    display.drawStr(0, 62, line);
+    snprintf(line, sizeof(line), "XP %lu  Badges %d/%d", (unsigned long)progress::xp(prog, pet.pets), progress::badgeCount(prog), progress::COUNT);
+    display.drawStr(128 - display.getStrWidth(line), 62, line);
     return;
   }
+  if (statsPage == 2) { stepsview::badges(display, prog, millis()); return; }
 
   // System page: the numbers that decide whether a feature fits (heap) and how smooth it runs (FPS).
   display.setFont(u8g2_font_6x10_tf);
@@ -1249,6 +1339,7 @@ void enterMode(Mode m) {
   if (mode == MODE_LIVING_OLED && m != MODE_LIVING_OLED) living_oled::leave();
   mode = m;
   if (m == MODE_STATS) statsPage = 0;
+  if (m == MODE_GAME || m == MODE_TILT_MAZE || m == MODE_SNAKE) { prog.games++; progDirty = true; }
 
   if (m == MODE_PET) {
     uint32_t now = millis();
@@ -1497,6 +1588,7 @@ void loop() {
     lastTick = now;
     statsTick(now);
     stepsDayTick(now);
+    progressTick(now);
     saveSteps(false);
     saveStats(false);
     if (games::takeBestDirty()) saveBest();
@@ -1670,8 +1762,8 @@ void loop() {
     }
   } else if (mode == MODE_STATS) {
     if (b) enterMode(MODE_MENU);
-    else if (a) statsPage = (statsPage + 2) % 3;         // pet -> steps -> system (A = back, C = forward)
-    else if (c) statsPage = (statsPage + 1) % 3;
+    else if (a) statsPage = (statsPage + STATS_PAGES - 1) % STATS_PAGES;   // pet -> steps -> badges -> system (A = back, C = forward)
+    else if (c) statsPage = (statsPage + 1) % STATS_PAGES;
   } else if (b) {
     enterMode(MODE_MENU);
   }
@@ -1688,6 +1780,14 @@ void loop() {
     } else if (mode == MODE_PET) {
       drawPet(now);
       online::drawPetBadge(display);   // tiny weather/air/night icons from cached Online data
+      {   // a 1 px line along the bottom edge fills toward today's step goal (dotted once it is reached)
+        uint32_t goal = STEP_GOALS[setGoal], t = stepHist.cnt[0];
+        if (t > 0) {
+          int w = t >= goal ? 128 : (int)((uint64_t)t * 128 / goal);
+          if (t >= goal) { for (int x = 0; x < 128; x += 2) display.drawPixel(x, 63); }
+          else display.drawHLine(0, 63, w);
+        }
+      }
     } else if (mode == MODE_STATS) {
       drawStats();
     } else if (mode == MODE_MOTION) {
@@ -1721,6 +1821,8 @@ void loop() {
       drawMaze(now);
     }
 
+    if (mode == MODE_PET || mode == MODE_MENU || mode == MODE_STATS || mode == MODE_TOOLS || mode == MODE_GAMES ||
+        mode == MODE_SETTINGS || mode == MODE_TEMP || mode == MODE_ONLINE) drawToast(now);
     display.sendBuffer();
     dbgFrames++;
   }

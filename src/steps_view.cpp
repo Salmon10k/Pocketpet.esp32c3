@@ -43,6 +43,13 @@ void draw(U8G2 &display, const Info &in, uint32_t now) {
   display.setFont(u8g2_font_5x7_tf);
   snprintf(line, sizeof(line), "GOAL %lu", (unsigned long)goal);
   display.drawStr(56, 24, line);
+  if (in.streak > 0) {                                                // little flame + days in a row
+    int fx = 108 - (in.streak >= 10 ? 3 : 0), fy = 22;
+    display.drawDisc(fx + 2, fy - 2, 2);
+    display.drawTriangle(fx, fy - 3, fx + 4, fy - 3, fx + 2, fy - 8 - (int)((now / 150) % 2));
+    snprintf(line, sizeof(line), "%d", in.streak);
+    display.drawStr(fx + 7, 24, line);
+  }
   snprintf(line, sizeof(line), "YEST %lu", (unsigned long)stepHist.cnt[1]);
   display.drawStr(56, 32, line);
   if (walkingNow) {
@@ -79,7 +86,7 @@ void decorWalk(U8G2 &display, int cy, int rightEyeX, int cadence, uint32_t now) 
   }
 }
 
-void decorCheer(U8G2 &display, uint32_t startMs, uint32_t now) {
+void decorCheer(U8G2 &display, uint32_t startMs, uint32_t now, const char *g) {
   uint32_t age = now - startMs;
   for (int i = 0; i < 14; ++i) {
     int x = ((i * 37 + (int)(sinf(i * 1.7f + age / 400.0f) * 6)) % 128 + 128) % 128;
@@ -87,8 +94,42 @@ void decorCheer(U8G2 &display, uint32_t startMs, uint32_t now) {
     if (y >= 0 && y < 62) display.drawBox(x, y, 2, 2);
   }
   display.setFont(u8g2_font_5x7_tf);
-  const char *g = "GOAL!";
   if ((age / 250) & 1) display.drawStr(64 - display.getStrWidth(g) / 2, 7, g);      // blinks at the top
+}
+
+void badges(U8G2 &display, const progress::Data &prog, uint32_t now) {
+  char line[32];
+  for (int i = 0; i < progress::COUNT; ++i) {
+    int x = 3 + (i % 8) * 15, y = 19 + (i / 8) * 15;
+    if (progress::has(prog, i)) {
+      display.drawRBox(x, y, 13, 13, 3);
+      display.setDrawColor(0);
+      display.setFont(u8g2_font_5x7_tf);
+      snprintf(line, sizeof(line), "%d", i + 1);
+      display.drawStr(x + 7 - display.getStrWidth(line) / 2, y + 10, line);
+      display.setDrawColor(1);
+    } else {
+      display.drawRFrame(x, y, 13, 13, 3);
+      display.drawPixel(x + 6, y + 6);
+    }
+  }
+  int shown = (int)((now / 2200) % progress::COUNT);
+  display.setFont(u8g2_font_5x7_tf);
+  snprintf(line, sizeof(line), "%d %s%s", shown + 1, progress::badgeName(shown), progress::has(prog, shown) ? " *" : "");
+  display.drawStr(0, 55, line);
+  display.drawStr(0, 63, progress::has(prog, shown) ? "Earned!" : progress::badgeHint(shown));
+}
+
+void toast(U8G2 &display, const char *l1, const char *l2, uint32_t age) {
+  int y = age < 250 ? -20 + (int)(age * 20 / 250) : (age > 3150 ? -(int)((age - 3150) * 20 / 250) : 0);
+  display.setDrawColor(0);
+  display.drawBox(8, y, 112, 20);
+  display.setDrawColor(1);
+  display.drawRFrame(8, y, 112, 20, 3);
+  display.setFont(u8g2_font_5x7_tf);
+  display.drawStr(64 - display.getStrWidth(l1) / 2, y + 8, l1);
+  display.setFont(u8g2_font_6x10_tf);
+  display.drawStr(64 - display.getStrWidth(l2) / 2, y + 17, l2);
 }
 
 }  // namespace stepsview

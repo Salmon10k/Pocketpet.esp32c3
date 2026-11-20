@@ -145,8 +145,16 @@ The MPU6050 counts your steps all the time, in every mode and with the screen of
 ![Steps page states](docs/images/steps-page.png)
 ![Walking and goal pet](docs/images/steps-pet.png)
 
+### Growth, streaks and badges
+- **Growth:** the pet earns XP from steps (1 per 50), petting (2), songs it danced to (25), games (10) and finished focus timers (40). It grows through five stages, **Bit, Byte, Kilo, Mega, Giga** (at 0 / 300 / 1200 / 3000 / 7000 XP), and its eyes change with the stage (big and round as a Bit, wider and squarer later). Growing up gives a confetti jump and a toast.
+- **Streak:** days in a row you reached the step goal. A flame with the number shows next to the goal on the Steps page. A missed day resets it.
+- **16 badges** (Stats > BADGES, press C twice): First steps, Goal getter, On a roll (3 days), Unstoppable (7), 10K day, Wanderer (10k steps total), Marathoner (100k), Best friend (100 pets), Cuddle king (1000), Dancer, Gamer (10 games), Focused (5 focus timers), Kilo, Mega, Giga, Collector (all of them). Earned ones are solid with their number; the line below cycles through names and hints. A toast slides in from the top when you earn one.
+- A thin line along the bottom edge of the pet screen fills toward today's step goal (dotted when reached).
+
+![Badges page and a toast](docs/images/badges.png)
+
 ### Stats
-Happiness and energy are saved to flash (about every 2 minutes when they changed, and when leaving Pet mode), so the pet remembers across reboots. The Stats screen shows both bars and a lifetime pet count. **A or C flips pages: pet, steps, System.** The System page has the numbers that matter for debugging: FPS (frames sent to the OLED, capped at 25), how often `loop()` runs, free heap, lowest free heap since boot, the largest free block (the real limit for a TLS connection), app size, uptime and why the chip last restarted. Open it before and after using Online or Spotify to see how much heap they eat.
+Happiness and energy are saved to flash (about every 2 minutes when they changed, and when leaving Pet mode), so the pet remembers across reboots. The Stats screen shows both bars and a lifetime pet count. **A or C flips pages: pet, steps, badges, System.** The System page has the numbers that matter for debugging: FPS (frames sent to the OLED, capped at 25), how often `loop()` runs, free heap, lowest free heap since boot, the largest free block (the real limit for a TLS connection), app size, uptime and why the chip last restarted. Open it before and after using Online or Spotify to see how much heap they eat.
 
 ### Other
 - Button debouncing with press events.
@@ -177,7 +185,7 @@ Happiness and energy are saved to flash (about every 2 minutes when they changed
 - `tools/spotify_auth.py` -> one-time Spotify login helper (PC)
 - `tools/hostcheck/` -> compiles all firmware sources on a PC against mock Arduino headers (a syntax check, no ESP32 needed)
 - `tools/gamepreview/` -> renders menus and games to PNG sheets on the PC, scripted "AI players", random-input fuzz test
-- `src/steps.h/.cpp`, `src/steps_view.h/.cpp` -> step detector + day history (pure C++) and the Steps page / pet decorations drawing
+- `src/steps.h/.cpp`, `src/steps_view.h/.cpp`, `src/progress.h/.cpp` -> step detector + day history, XP / stages / streak / badge rules (pure C++), and the Steps / Badges pages, toast and pet decorations drawing
 - `tools/steptest/` -> PC tests and preview renders of the step counter
 - `tools/petpreview/`, `tools/vibetest/`, `tools/fluidtest/` -> the pet's music reactions, the genre/vibe logic and the fluid, tested on the PC
 - `PCB/` -> KiCad project for the custom board (finalised and ordered 2026-11-15)
