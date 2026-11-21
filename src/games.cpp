@@ -15,7 +15,7 @@ bool bestDirty = false;
 Id cur = STAR;
 Input in = {};
 uint32_t lastStepAt = 0;
-bool usesTilt(Id g) { return g != PINBALL && g != STACK && g != DUEL; }   // these three play without the MPU6050
+bool usesTilt(Id g) { return g != PINBALL && g != STACK && g != DUEL && g != FLAPPY; }   // these play without the MPU6050
 
 inline int imin(int a, int b) { return a < b ? a : b; }
 inline int imax(int a, int b) { return a > b ? a : b; }
@@ -1236,11 +1236,168 @@ void draw(U8G2 &d, uint32_t now) {
   if (over && t > 0.5f) gameOver(d, (uint32_t)wins, isBest);
 }
 }  // namespace duel
+
+// =====================================================================================================
+//  FLAPPY: tap A or C to flap through the gaps. A little pet is the bird. No tilt needed.
+// =====================================================================================================
+namespace flp {
+const float GRAV = 480.0f, FLAP = -118.0f, BX = 32.0f, PW = 14.0f, SPACING = 70.0f, FLOOR = 59.0f;
+struct Pipe { float x, gy; bool passed; } pp[3];
+float by, bvy, speed, gap, dist;
+int score;
+bool started, over, isBest;
+float deadT;
+
+void spawn(Pipe &p, float x) { p.x = x; p.gy = frand(20.0f, 41.0f); p.passed = false; }
+
+void reset() {
+  by = 30; bvy = 0; score = 0; started = false; over = false; isBest = false; speed = 46; gap = 31; deadT = 0; dist = 0;
+  for (int i = 0; i < 3; ++i) spawn(pp[i], 150.0f + i * SPACING);
+}
+
+void flap() {
+  if (over) return;
+  started = true;
+  bvy = FLAP;
+}
+
+void die() { over = true; deadT = 0; isBest = noteScore((uint32_t)score); }
+
+void step() {
+  if (over) { deadT += DT; if (by < FLOOR - 3) { bvy += GRAV * DT; by += bvy * DT; if (by > FLOOR - 3) by = FLOOR - 3; } return; }
+  dist += speed * DT;
+  if (!started) { by = 30.0f + 3.0f * sinf(dist * 0.12f); return; }          // hovers until the first flap
+  bvy += GRAV * DT;
+  if (bvy > 240.0f) bvy = 240.0f;
+  by += bvy * DT;
+  speed = 46.0f + fminf(32.0f, score * 1.6f);
+  gap = fmaxf(24.0f, 31.0f - score * 0.25f);
+  for (auto &p : pp) {
+    p.x -= speed * DT;
+    if (p.x + PW < BX - 5 && !p.passed) { p.passed = true; ++score; }
+    if (p.x + PW < -2) {                                                      // recycle behind the farthest pipe
+      float far = 0; for (auto &q : pp) far = fmaxf(far, q.x);
+      spawn(p, far + SPACING);
+    }
+    if (BX + 5 > p.x && BX - 5 < p.x + PW && (by - 4 < p.gy - gap / 2 || by + 4 > p.gy + gap / 2)) die();
+  }
+  if (by + 4 >= FLOOR) { by = FLOOR - 4; die(); }
+  if (by - 4 < 0) { by = 4; bvy = 0; }
+}
+
+void draw(U8G2 &d, uint32_t now) {
+  for (auto &p : pp) {
+    int x = (int)lroundf(p.x), top = (int)lroundf(p.gy - gap / 2), bot = (int)lroundf(p.gy + gap / 2);
+    if (x > 128 || x + PW < 0) continue;
+    box(d, x, 0, (int)PW, top - 3); box(d, x - 2, top - 4, (int)PW + 4, 4);              // top pipe with a cap
+    box(d, x, bot + 3, (int)PW, 60 - bot - 3); box(d, x - 2, bot, (int)PW + 4, 4);       // bottom pipe
+    d.setDrawColor(0); vl(d, x + 3, 1, imax(0, top - 5)); vl(d, x + 3, bot + 5, imax(0, 54 - bot)); d.setDrawColor(1);   // a highlight line
+  }
+  hl(d, 0, 60, 128);
+  for (int x = -((int)dist % 8); x < 128; x += 8) px(d, x, 62);                         // scrolling ground
+  int by0 = (int)lroundf(by);                                                           // the bird: a rounded little pet
+  rbox(d, (int)BX - 6, by0 - 5, 12, 10, 3);
+  d.setDrawColor(0);
+  box(d, (int)BX + 1, by0 - 3, 3, 3);                                                   // eye
+  if (!over) hl(d, (int)BX - 4, by0 + 2 + ((now / 120) & 1), 4);                        // flapping wing
+  d.setDrawColor(1);
+  px(d, (int)BX + 2, by0 - 2);
+  d.setFont(u8g2_font_7x13B_tf);
+  char buf[12];
+  snprintf(buf, sizeof(buf), "%d", score);
+  d.drawStr((128 - d.getStrWidth(buf)) / 2, 13, buf);
+  if (!started && !over) small(d, "A / C = flap", 64, 54);
+  if (over && deadT > 0.4f) gameOver(d, (uint32_t)score, isBest);
+}
+}  // namespace flp
+
+// =====================================================================================================
+//  MEMORY: Simon with tilt. Watch the pads light up, then repeat the pattern by tilting toward them.
+// =====================================================================================================
+namespace mem {
+enum State { WATCH, TURN, GOOD, BAD } st;
+uint8_t seq[60];
+int len, shown, idx, score;
+float t, litT;
+int lit;                      // pad lit right now (-1 none): 0 up, 1 right, 2 down, 3 left
+bool armed, over, isBest;
+
+void addRound() {
+  if (len < 60) seq[len++] = (uint8_t)random(0, 4);
+  st = WATCH; shown = 0; t = -0.7f; lit = -1;
+}
+
+void reset() { len = 0; score = 0; over = false; isBest = false; litT = 0; armed = false; addRound(); }
+
+int padFromTilt() {
+  float ax = fabsf(in.tx), ay = fabsf(in.ty);
+  if (ax < 0.42f && ay < 0.42f) return -1;
+  if (ay >= ax) return in.ty < 0 ? 0 : 2;
+  return in.tx > 0 ? 1 : 3;
+}
+
+void step() {
+  if (litT > 0) { litT -= DT; if (litT <= 0 && st != WATCH) lit = -1; }
+  if (st == WATCH) {
+    float on = fmaxf(0.24f, 0.5f - 0.015f * len), off = 0.18f;
+    t += DT;
+    if (t < 0) { lit = -1; return; }
+    float c = t - shown * (on + off);
+    if (shown >= len) { st = TURN; idx = 0; armed = false; lit = -1; return; }
+    lit = (c < on) ? seq[shown] : -1;
+    if (c >= on + off) ++shown;
+  } else if (st == TURN) {
+    if (fabsf(in.tx) < 0.22f && fabsf(in.ty) < 0.22f) armed = true;
+    int pad = padFromTilt();
+    if (armed && pad >= 0) {
+      armed = false; lit = pad; litT = 0.22f;
+      if (pad == seq[idx]) {
+        if (++idx >= len) { score = len; st = GOOD; t = 0; }
+      } else { st = BAD; over = true; t = 0; isBest = noteScore((uint32_t)score); }
+    }
+  } else if (st == GOOD) {
+    t += DT;
+    if (t > 0.9f) addRound();
+  } else if (st == BAD) {
+    t += DT;
+  }
+}
+
+void pad(U8G2 &d, int k, bool on) {
+  static const int cx[4] = {64, 91, 64, 37}, cy[4] = {24, 40, 56, 40};
+  int x = cx[k], y = cy[k];
+  if (k == 0 || k == 2) { if (on) box(d, x - 11, y - 6, 22, 12); else frame(d, x - 11, y - 6, 22, 12); }
+  else                  { if (on) box(d, x - 7, y - 9, 14, 18); else frame(d, x - 7, y - 9, 14, 18); }
+  d.setDrawColor(on ? 0 : 1);                                                           // arrow on the pad
+  int dx = (k == 1) - (k == 3), dy = (k == 2) - (k == 0);
+  line(d, x - dx * 3 - dy * 0, y - dy * 3, x + dx * 3, y + dy * 3);
+  if (dx) { line(d, x + dx * 3, y, x + dx, y - 2); line(d, x + dx * 3, y, x + dx, y + 2); }
+  else    { line(d, x, y + dy * 3, x - 2, y + dy); line(d, x, y + dy * 3, x + 2, y + dy); }
+  d.setDrawColor(1);
+}
+
+void draw(U8G2 &d, uint32_t now) {
+  (void)now;
+  for (int k = 0; k < 4; ++k) pad(d, k, lit == k);
+  d.setFont(u8g2_font_5x7_tf);
+  char buf[24];
+  snprintf(buf, sizeof(buf), "round %d", len);
+  d.drawStr(0, 7, buf);
+  const char *msg = st == WATCH ? "watch" : (st == TURN ? "your turn" : (st == GOOD ? "nice!" : ""));
+  d.drawStr(128 - d.getStrWidth(msg), 7, msg);
+  if (st == TURN) {                                                                    // where your tilt is pointing
+    int dx = (int)clampf(in.tx * 24.0f, -12.0f, 12.0f), dy = (int)clampf(in.ty * 24.0f, -10.0f, 10.0f);
+    circle(d, 64, 40, 2);
+    disc(d, 64 + dx, 40 + dy, 2);
+  }
+  if (over && t > 0.5f) gameOver(d, (uint32_t)score, isBest);
+}
+}  // namespace mem
 }  // namespace
 
 // ------------------------------------------------------------------------------------------------ public
 const char *name(Id g) {
-  static const char *const N[COUNT] = {"Star Blaster", "Sniper", "Road Rush", "Pinball", "Breakout", "Asteroids", "Stack", "Quick Draw"};
+  static const char *const N[COUNT] = {"Star Blaster", "Sniper", "Road Rush", "Pinball", "Breakout", "Asteroids", "Stack", "Quick Draw", "Flappy", "Memory"};
   return (g >= 0 && g < COUNT) ? N[g] : "";
 }
 
@@ -1258,6 +1415,8 @@ void begin(Id g) {
     case ASTEROIDS: ast::reset(); break;
     case STACK: stk::reset(); break;
     case DUEL: duel::reset(); break;
+    case FLAPPY: flp::reset(); break;
+    case MEMORY: mem::reset(); break;
     default: pin::reset(); break;
   }
 }
@@ -1295,6 +1454,13 @@ uint8_t update(uint32_t now, const Input &i) {
       if (duel::over) { if (again && duel::t > 0.7f) duel::reset(); }
       else if (again) duel::press();
       break;
+    case FLAPPY:
+      if (flp::over) { if (again && flp::deadT > 0.5f) flp::reset(); }
+      else if (again) flp::flap();
+      break;
+    case MEMORY:
+      if (mem::over && again && mem::t > 0.6f) { mem::reset(); flags |= FLAG_REZERO; }
+      break;
     default:
       if (pin::state == pin::OVER) { if (again) pin::reset(); }
       else if (pin::state == pin::SERVE && again) pin::launch();
@@ -1311,6 +1477,8 @@ uint8_t update(uint32_t now, const Input &i) {
       case ASTEROIDS: ast::step(); break;
       case STACK: stk::step(); break;
       case DUEL: duel::step(); break;
+      case FLAPPY: flp::step(); break;
+      case MEMORY: mem::step(); break;
       default: pin::step(); break;
     }
     lastStepAt += 20;
@@ -1338,6 +1506,8 @@ void draw(U8G2 &d, uint32_t now) {
     case ASTEROIDS: ast::draw(d, now); break;
     case STACK: stk::draw(d, now); break;
     case DUEL: duel::draw(d, now); break;
+    case FLAPPY: flp::draw(d, now); break;
+    case MEMORY: mem::draw(d, now); break;
     default: pin::draw(d, now); break;
   }
   if (needsTilt && in.calibrating) calibrationBanner(d);

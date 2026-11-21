@@ -235,7 +235,7 @@ void applyScreen() {
   display.setFlipMode(setFlip ? 1 : 0);
 }
 
-const char *const BEST_KEYS[games::COUNT] = {"bestStar", "bestSnip", "bestRoad", "bestPin", "bestBrk", "bestAst", "bestStk", "bestDue"};   // best scores of the new games
+const char *const BEST_KEYS[games::COUNT] = {"bestStar", "bestSnip", "bestRoad", "bestPin", "bestBrk", "bestAst", "bestStk", "bestDue", "bestFlp", "bestMem"};   // best scores of the new games
 
 void loadSettings() {
   setBright = constrain(prefs.getUChar("bright", 2), 0, 3);
@@ -632,7 +632,7 @@ int curClock = 0;
 petface::EyeAnim timerEyes;
 const launcher::Item gamesMenu[] = {
   {"Star Blaster", launcher::ICON_STAR}, {"Sniper", launcher::ICON_SNIPER}, {"Road Rush", launcher::ICON_ROAD}, {"Pinball", launcher::ICON_PINBALL},
-  {"Breakout", launcher::ICON_BREAKOUT}, {"Asteroids", launcher::ICON_ASTEROID}, {"Stack", launcher::ICON_STACK}, {"Quick Draw", launcher::ICON_DUEL},
+  {"Breakout", launcher::ICON_BREAKOUT}, {"Asteroids", launcher::ICON_ASTEROID}, {"Stack", launcher::ICON_STACK}, {"Quick Draw", launcher::ICON_DUEL}, {"Flappy", launcher::ICON_FLAPPY}, {"Memory", launcher::ICON_MEMORY},
   {"Tilt Maze", launcher::ICON_MAZE}, {"Snake", launcher::ICON_SNAKE}, {"Back", launcher::ICON_BACK}};
 const int GAMES_COUNT = games::COUNT + 3;           // the games, Tilt Maze, Snake, Back
 games::Id curGame = games::STAR;

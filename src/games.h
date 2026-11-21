@@ -11,9 +11,11 @@
 //   Asteroids    : tilt turns the ship, hold A = thrust, hold C = fire
 //   Stack        : A / C drops the sliding block (no tilt needed)
 //   Quick Draw   : wait for DRAW!, then press A / C before the outlaw (no tilt needed)
+//   Flappy       : A / C flaps a little pet through the pipes (no tilt needed)
+//   Memory       : Simon with tilt: watch the pads, then tilt toward them in the same order
 // B always goes back (handled by main.cpp). main.cpp owns the tilt calibration and hands the readings in.
 namespace games {
-enum Id { STAR = 0, SNIPER = 1, ROAD = 2, PINBALL = 3, BREAKOUT = 4, ASTEROIDS = 5, STACK = 6, DUEL = 7, COUNT = 8 };
+enum Id { STAR = 0, SNIPER = 1, ROAD = 2, PINBALL = 3, BREAKOUT = 4, ASTEROIDS = 5, STACK = 6, DUEL = 7, FLAPPY = 8, MEMORY = 9, COUNT = 10 };
 
 struct Input {
   bool a, c;               // button press events (true for one loop)

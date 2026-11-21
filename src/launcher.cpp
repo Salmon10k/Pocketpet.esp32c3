@@ -600,6 +600,24 @@ void drawIcon(U8G2 &d, int app, int cx, int cy, int r, uint32_t t) {
       px(d, cx, Y(2));
       break;
     }
+    case ICON_FLAPPY: {                                                 // pipe + bird that bobs
+      int bob = sn(ph * 4) * S(2) / 127;
+      box(d, X(4), Y(-10), S(5), S(8)); box(d, X(3), Y(-3), S(7), S(2));
+      box(d, X(4), Y(5), S(5), S(6)); box(d, X(3), Y(3), S(7), S(2));
+      rbox(d, X(-9), Y(-3) + bob, S(9), S(7), 2);
+      d.setDrawColor(0); box(d, X(-3), Y(-1) + bob, imax(1, S(2)), imax(1, S(2))); d.setDrawColor(1);
+      break;
+    }
+    case ICON_MEMORY: {                                                 // four pads, one lights up in turn
+      int lit = (ph / 14) % 4;
+      const int px4[4] = {0, 6, 0, -6}, py4[4] = {-6, 0, 6, 0};
+      for (int k = 0; k < 4; k++) {
+        int w = (k & 1) ? S(5) : S(8), h = (k & 1) ? S(8) : S(5);
+        if (k == lit) box(d, X(px4[k]) - w / 2, Y(py4[k]) - h / 2, w, h);
+        else frame(d, X(px4[k]) - w / 2, Y(py4[k]) - h / 2, w, h);
+      }
+      break;
+    }
     default: frame(d, X(-8), Y(-8), S(16) + 1, S(16) + 1); break;
   }
 }

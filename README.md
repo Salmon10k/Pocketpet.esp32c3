@@ -75,6 +75,8 @@ Built for the three buttons and the MPU6050. Best scores are saved.
 | **Asteroids** (screen wraps, rocks split) | tilt turns the ship, hold **A** thrust, hold **C** fire |
 | **Stack** (drop the sliding block, only the overlap stays, 3 perfect drops in a row grow it back) | **A** or **C** drops (no tilt needed) |
 | **Quick Draw** (wait for DRAW!, beat the outlaw, he gets faster every win; too early loses) | **A** or **C** (no tilt needed) |
+| **Flappy** (pipes get faster and the gap tighter as you score) | **A** or **C** flap (no tilt needed) |
+| **Memory** (Simon: watch the pattern, repeat it by tilting up/right/down/left) | tilt |
 | **Tilt Maze** | tilt, **A** re-zero, **C** new maze |
 | **Snake** | tilt to steer (or **A** left / **C** right) |
 
@@ -183,7 +185,7 @@ Happiness and energy are saved to flash (about every 2 minutes when they changed
 
 ## Files
 - `src/main.cpp` -> main firmware: hardware init, input, MPU6050 handling, pet logic and drawing, Stats, Tilt Maze, Snake, mode switching
-- `src/games.h` / `src/games.cpp` -> the 8 games (Star Blaster, Sniper, Road Rush, Pinball, Breakout, Asteroids, Stack, Quick Draw)
+- `src/games.h` / `src/games.cpp` -> the 10 games (Star Blaster, Sniper, Road Rush, Pinball, Breakout, Asteroids, Stack, Quick Draw, Flappy, Memory)
 - `src/launcher.h` / `src/launcher.cpp` -> home menu and all sub-menus (carousel / tilt ring, procedural icons); `src/gfx.*` -> clipped drawing helpers
 - `src/fluid.*` -> particle fluid simulation; `src/living_oled.*` -> Living OLED scenes
 - `src/lyrics_visual.*`, `src/lyric_timing.*`, `src/arabic_shape.*` / `arabic_forms.inc` -> Lyrics visual, word timing, Urdu / Arabic text shaping
@@ -216,7 +218,7 @@ When changing wiring, update `src/config.h` first.
 - [x] RoboEyes-style eyes (own implementation, see Pet mode)
 - [x] Temperature mode
 - [x] Game mode (Magic 8-ball + Dice)
-- [x] Games: Star Blaster, Sniper, Road Rush, Pinball, Breakout, Asteroids, Stack, Quick Draw, generated Tilt Maze, tilt Snake (verified on the device 2026-11-15)
+- [x] Games: Star Blaster, Sniper, Road Rush, Pinball, Breakout, Asteroids, Stack, Quick Draw, Flappy, Memory, generated Tilt Maze, tilt Snake (verified on the device 2026-11-15)
 - [x] Touch pad (Pet mode only)
 - [x] Optional Wi-Fi NTP clock (credentials must be configured locally in ignored `src/secrets.h`)
 - [x] Wi-Fi NTP clock

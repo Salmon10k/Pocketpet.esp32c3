@@ -19,7 +19,7 @@ static FILE *openOut(const char *name) { std::string p = OUTDIR + "/" + name; FI
 using launcher::Item;
 static const Item GAMES[] = {{"Star Blaster", launcher::ICON_STAR}, {"Sniper", launcher::ICON_SNIPER}, {"Road Rush", launcher::ICON_ROAD},
                              {"Pinball", launcher::ICON_PINBALL}, {"Breakout", launcher::ICON_BREAKOUT}, {"Asteroids", launcher::ICON_ASTEROID},
-                             {"Stack", launcher::ICON_STACK}, {"Quick Draw", launcher::ICON_DUEL}, {"Tilt Maze", launcher::ICON_MAZE}, {"Snake", launcher::ICON_SNAKE}, {"Back", launcher::ICON_BACK}};
+                             {"Stack", launcher::ICON_STACK}, {"Quick Draw", launcher::ICON_DUEL}, {"Flappy", launcher::ICON_FLAPPY}, {"Memory", launcher::ICON_MEMORY}, {"Tilt Maze", launcher::ICON_MAZE}, {"Snake", launcher::ICON_SNAKE}, {"Back", launcher::ICON_BACK}};
 static const Item TOOLS[] = {{"Temperature", launcher::ICON_TOOLS}, {"Timer", launcher::ICON_TIMER}, {"Pomodoro", launcher::ICON_POMO}, {"Stopwatch", launcher::ICON_STOPWATCH}, {"Magic 8-ball", launcher::ICON_8BALL}, {"Dice", launcher::ICON_DICE}, {"Back", launcher::ICON_BACK}};
 static const Item SETTINGS[] = {{"Brightness", launcher::ICON_BRIGHT}, {"Screen off", launcher::ICON_SCREEN_OFF}, {"Flip screen", launcher::ICON_FLIP},
                                 {"Menu style", launcher::ICON_STYLE}, {"Lyrics sync", launcher::ICON_SYNC}, {"Music pet", launcher::ICON_SPOTIFY},
@@ -62,7 +62,7 @@ static void introSheet(const char *file) {                 // the glide-in anima
 
 static void iconSheet(const char *file) {
   FILE *f = openOut(file);
-  const int total = launcher::ICON_STOPWATCH + 1;
+  const int total = launcher::ICON_MEMORY + 1;
   for (int base = 0; base < total; base += 15) {
     display.clearBuffer();
     for (int k = 0; k < 15 && base + k < total; ++k) {
@@ -153,8 +153,8 @@ int main(int argc, char **argv) {
     }
     fclose(f);
   }
-  menuSheet("m_games_car.bin", GAMES, 11, 0, nullptr, {0, 4, 7, 10});
-  menuSheet("m_games_ring.bin", GAMES, 11, 1, nullptr, {0, 5});
+  menuSheet("m_games_car.bin", GAMES, 13, 0, nullptr, {0, 4, 7, 8, 9, 12});
+  menuSheet("m_games_ring.bin", GAMES, 13, 1, nullptr, {0, 5});
   menuSheet("m_tools_car.bin", TOOLS, 7, 0, nullptr, {0, 1, 2, 3, 6});
   menuSheet("m_settings_car.bin", SETTINGS, 9, 0, settingsVal, {0, 6, 8});
   menuSheet("m_settings_ring.bin", SETTINGS, 9, 1, settingsVal, {0, 6});
@@ -269,6 +269,33 @@ int main(int argc, char **argv) {
       if (duel::over && duel::t > 0.8f) i.c = true;
     },
     []() { printf("duel: wins %d best %d ms over %d\n", duel::wins, (int)duel::bestMs, (int)duel::over); });
+
+  // ---------------- Flappy: flap when below the middle of the next gap (a decent but imperfect player)
+  runGame("flappy.bin", FLAPPY, 90, {0.3f, 2.0f, 5.0f, 9.0f, 14.0f, 20.0f, 30.0f, 45.0f, 60.0f, 89.0f},
+    [](float t, uint32_t now, Input &i) {
+      float gy = 30; float bestX = 1e9f;
+      for (auto &p : flp::pp) if (p.x + flp::PW > flp::BX - 6 && p.x < bestX) { bestX = p.x; gy = p.gy; }
+      static uint32_t lastFlap = 0;
+      if (flp::over) { if (flp::deadT > 0.6f) i.a = true; return; }
+      if (flp::by > gy + 5.0f && flp::bvy > -30 && now - lastFlap > 120) { i.a = true; lastFlap = now; }
+      if (!flp::started && t > 0.5f) i.c = true;
+    },
+    []() { printf("flappy: score %d over %d speed %.0f gap %.0f\n", flp::score, (int)flp::over, flp::speed, flp::gap); });
+
+  // ---------------- Memory: repeat the pattern by tilting to each pad and back to centre
+  runGame("memory.bin", MEMORY, 80, {0.5f, 2.0f, 5.0f, 9.0f, 14.0f, 22.0f, 35.0f, 50.0f, 79.0f},
+    [](float t, uint32_t now, Input &i) {
+      static int lastIdx = -1; static uint32_t pressedAt = 0; static bool inDir = false;
+      if (mem::over) { if (mem::t > 0.8f) i.a = true; return; }
+      if (mem::st == mem::TURN) {
+        static const float dx[4] = {0, 0.7f, 0, -0.7f}, dy[4] = {-0.7f, 0, 0.7f, 0};
+        if (!inDir && now - pressedAt > 180) { int k = mem::seq[mem::idx]; i.tx = dx[k]; i.ty = dy[k]; inDir = true; pressedAt = now; }
+        else if (inDir && now - pressedAt > 120) { inDir = false; pressedAt = now; }
+        else if (inDir) { int k = mem::seq[mem::idx]; i.tx = dx[k]; i.ty = dy[k]; }
+        (void)lastIdx;
+      } else inDir = false;
+    },
+    []() { printf("memory: round %d score %d over %d\n", mem::len, mem::score, (int)mem::over); });
 
   // ---------------- Road Rush traffic close up: sedans and trucks at several distances (must not look like blobs)
   {
