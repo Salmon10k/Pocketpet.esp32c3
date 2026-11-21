@@ -573,6 +573,33 @@ void drawIcon(U8G2 &d, int app, int cx, int cy, int r, uint32_t t) {
       box(d, X(3), Y(-4 + yr), S(6), S(6)); box(d, X(4), Y(3 + yr), S(4), S(3)); px(d, X(8), Y(-5 + yr));
       break;
     }
+    case ICON_TIMER: {                                                  // hourglass, sand runs through
+      hl(d, X(-7), Y(-9), S(14) + 1); hl(d, X(-7), Y(9), S(14) + 1);
+      line(d, X(-6), Y(-9), cx, Y(0)); line(d, X(6), Y(-9), cx, Y(0));
+      line(d, X(-6), Y(9), cx, Y(0)); line(d, X(6), Y(9), cx, Y(0));
+      int fill = (ph / 4) % 12;                                         // top empties, bottom fills, then it flips
+      int topH = 12 - fill, botH = fill;
+      if (topH > 1) hl(d, cx - imax(0, S(topH) / 4), Y(-8) + S(8 - topH) / 2, imax(1, S(topH) / 2));
+      if (botH > 0) hl(d, cx - imax(0, S(botH) / 3), Y(8) - S(botH) / 3, imax(1, 2 * S(botH) / 3));
+      px(d, cx, Y(3) + (ph % 4));
+      break;
+    }
+    case ICON_POMO: {                                                   // tomato with a leaf
+      disc(d, cx, Y(2), S(8));
+      d.setDrawColor(0);
+      line(d, X(-3), Y(-3), X(0), Y(-1)); line(d, X(3), Y(-3), X(0), Y(-1)); line(d, cx, Y(-1), cx, Y(-3));
+      d.setDrawColor(1);
+      line(d, cx, Y(-6), cx, Y(-10)); line(d, cx, Y(-7), X(-4), Y(-9)); line(d, cx, Y(-7), X(4), Y(-9));
+      break;
+    }
+    case ICON_STOPWATCH: {                                              // round watch with a sweeping hand
+      circle(d, cx, Y(2), S(8));
+      box(d, X(-1), Y(-9), imax(2, S(3)), imax(2, S(2)));
+      int a = (ph * 4) & 255;
+      line(d, cx, Y(2), cx + cs(a - 64) * S(6) / 127, Y(2) + sn(a - 64) * S(6) / 127);
+      px(d, cx, Y(2));
+      break;
+    }
     default: frame(d, X(-8), Y(-8), S(16) + 1, S(16) + 1); break;
   }
 }

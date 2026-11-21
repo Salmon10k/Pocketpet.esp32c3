@@ -51,7 +51,16 @@ The **pet is the home screen**: it is what you see when the keychain turns on an
 - **Carousel** (default): big icons slide in from the right; **A** = previous, **C** = next, **B** = open.
 - **Tilt ring**: the apps sit on a ring; **tilt the keychain toward an app** to highlight it, **B** opens it (A/C also step through them).
 
-In the launcher: Fluid, Stats, Motion test, Tools, Games, Online, Spotify, Visualizer (Lyrics visual), Living OLED, Settings. While it starts, the MPU6050 calibrates itself in the background (gyro offsets, and which way is "down" from gravity), so tilt works however the sensor sits on the board and however you hold the keychain; in Pet mode it re-levels itself when you hold it still in a new pose. Every sub-menu (Tools, Games, Settings and the Online list) uses the same carousel / tilt-ring look as the home screen: **A/C** move, short **B** opens, **hold B** goes up one level, and each one ends with a **Back** item. Settings shows the current value in a pill under the name; Games shows your best score. Tools contains Temperature, Magic 8-ball and Dice (shake the keychain to roll / ask).
+In the launcher: Fluid, Stats, Motion test, Tools, Games, Online, Spotify, Visualizer (Lyrics visual), Living OLED, Settings. While it starts, the MPU6050 calibrates itself in the background (gyro offsets, and which way is "down" from gravity), so tilt works however the sensor sits on the board and however you hold the keychain; in Pet mode it re-levels itself when you hold it still in a new pose. Every sub-menu (Tools, Games, Settings and the Online list) uses the same carousel / tilt-ring look as the home screen: **A/C** move, short **B** opens, **hold B** goes up one level, and each one ends with a **Back** item. Settings shows the current value in a pill under the name; Games shows your best score. Tools contains Temperature, Timer, Pomodoro, Stopwatch, Magic 8-ball and Dice (shake the keychain to roll / ask).
+
+### Timer, Pomodoro, Stopwatch
+Three clocks in Tools. Each page shows the time in big digits, a progress bar and **the pet's little face reacting**: serious while you focus, wide-eyed for the last 10 seconds, relaxed on a break, jumping with happy eyes when time is up. They keep running in the background (a running timer counts down in the corner of the pet screen); when one finishes the screen wakes up, opens the clock and the border blinks (there is no buzzer on the board, so the alert is visual; any button dismisses it).
+- **Timer:** A / C set the minutes (1 to 180), **B** start / pause, while running A resets and C adds a minute.
+- **Pomodoro:** A / C pick a preset (25/5, 50/10, 15/3), B starts. Focus, then a break that starts by itself, four dots show your rounds, and after the fourth round the break is 3x longer. C skips the phase, A resets. Every finished focus session counts toward growth and the Focused badge, and the pet gets happier.
+- **Stopwatch:** B start / stop, C lap (shows the last lap), A reset. Tenths of a second, and a bar that sweeps once a minute.
+- Hold B (0.7 s) goes back to Tools; the clock keeps running.
+
+![Timer, Pomodoro and Stopwatch screens](docs/images/focus.png)
 
 ### Games
 Built for the three buttons and the MPU6050. Best scores are saved.
@@ -185,6 +194,7 @@ Happiness and energy are saved to flash (about every 2 minutes when they changed
 - `tools/spotify_auth.py` -> one-time Spotify login helper (PC)
 - `tools/hostcheck/` -> compiles all firmware sources on a PC against mock Arduino headers (a syntax check, no ESP32 needed)
 - `tools/gamepreview/` -> renders menus and games to PNG sheets on the PC, scripted "AI players", random-input fuzz test
+- `src/focus.h/.cpp`, `src/focus_view.h/.cpp` -> timer / pomodoro / stopwatch logic (pure C++, tested) and its page
 - `src/steps.h/.cpp`, `src/steps_view.h/.cpp`, `src/progress.h/.cpp` -> step detector + day history, XP / stages / streak / badge rules (pure C++), and the Steps / Badges pages, toast and pet decorations drawing
 - `tools/steptest/` -> PC tests and preview renders of the step counter
 - `tools/petpreview/`, `tools/vibetest/`, `tools/fluidtest/` -> the pet's music reactions, the genre/vibe logic and the fluid, tested on the PC

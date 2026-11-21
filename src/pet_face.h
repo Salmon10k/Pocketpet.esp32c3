@@ -45,6 +45,8 @@ struct EyeAnim {
   void update(uint32_t now, const Target &t, bool tilted, float tx, float ty, bool allowWink = true);
   // dx / cy: the whole face moves (breathing, dance, bounce). Draws both eyes.
   void draw(U8G2 &d, int dx, int cy, uint32_t now) const;
+  // Same face at scale k (1 = full size) with the pair centred on x; for small faces on other screens (timer).
+  void drawAt(U8G2 &d, int cx, int cy, float k, uint32_t now) const;
 };
 
 // A little face for other screens (timer ...): two eyes at scale `s` (1 = full size) centred on x, y.

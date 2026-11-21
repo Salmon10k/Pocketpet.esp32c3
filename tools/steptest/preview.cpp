@@ -7,6 +7,8 @@
 #include "../../src/steps.h"
 #include "../../src/steps_view.h"
 #include "../../src/pet_face.h"
+#include "../../src/focus.h"
+#include "../../src/focus_view.h"
 
 U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
 static std::string OUTDIR = "/tmp/pocketpet-stepview";
@@ -67,6 +69,29 @@ int main(int argc, char **argv) {
     }
     display.clearBuffer();                                                            // toasts: sliding in, shown, sliding out
     for (uint32_t age : {60u, 125u, 1500u, 3300u}) { display.clearBuffer(); stepsview::toast(display, "NEW BADGE", "Dancer", age); dump(f); }
+  }
+  fclose(f);
+  f = openOut("focus.bin");
+  {
+    using namespace focus;
+    auto show = [&](Clock &c, uint32_t now, float lx = 0) {
+      static petface::EyeAnim anim;
+      petface::Target t = mood(c, now);
+      for (int i = 0; i < 20; ++i) anim.update(now - (20 - i) * 40, t, true, lx, 0, false);
+      anim.blink = 1; anim.wink = 1;
+      display.clearBuffer(); draw(display, c, anim, now); dump(f);
+    };
+    Clock t; init(t, K_TIMER);
+    show(t, 1000);                                           // setup 10:00
+    toggle(t, 0); update(t, 150000); show(t, 150000);        // 2.5 min in
+    update(t, 595000); show(t, 595000);                      // last seconds: wide eyes
+    update(t, 600000); show(t, 700); show(t, 1300);          // alert, both flash phases
+    Clock p; init(p, K_POMO);
+    show(p, 1000);                                           // preset screen
+    toggle(p, 0); update(p, 600000); show(p, 600000);        // focusing, serious
+    update(p, 25 * 60000 + 1000); p.alert = false; update(p, 25 * 60000 + 61000); show(p, 25 * 60000 + 61000);   // on a break
+    Clock w; init(w, K_WATCH);
+    toggle(w, 0); update(w, 83400); lap(w); update(w, 95900); show(w, 95900);
   }
   fclose(f);
   f = openOut("pet.bin");

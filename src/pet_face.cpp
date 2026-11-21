@@ -115,19 +115,23 @@ void EyeAnim::update(uint32_t now, const Target &t, bool tilted, float tx, float
   lookY = ease(lookY, gy, 0.32f);
 }
 
-void EyeAnim::draw(U8G2 &d, int dx, int cy, uint32_t now) const {
-  int lx = (int)lroundf(lookX), ly = (int)lroundf(lookY);
-  float h0 = geo.h * open * blink;
+void EyeAnim::draw(U8G2 &d, int dx, int cy, uint32_t now) const { drawAt(d, 64 + dx, cy, 1.0f, now); }
+
+void EyeAnim::drawAt(U8G2 &d, int cx, int cy, float k, uint32_t now) const {
+  int lx = (int)lroundf(lookX * k), ly = (int)lroundf(lookY * k);
+  float h0 = geo.h * k * open * blink;
   float hL = h0, hR = h0 * wink;
   int growL = 0, growR = 0;                                   // curiosity: the eye on the side it looks at gets taller
   if (style == EY_NORMAL && open > 0.5f) {
-    if (lookX <= -4) growL = (int)lroundf(fminf(6.0f, (-lookX - 3) * 1.2f));
-    if (lookX >= 4)  growR = (int)lroundf(fminf(6.0f, (lookX - 3) * 1.2f));
+    if (lookX <= -4) growL = (int)lroundf(fminf(6.0f, (-lookX - 3) * 1.2f) * k);
+    if (lookX >= 4)  growR = (int)lroundf(fminf(6.0f, (lookX - 3) * 1.2f) * k);
   }
   int ecy = cy + ly;
   int heL = (int)lroundf(hL) + growL, heR = (int)lroundf(hR) + growR;
-  rawEye(d, EYE_L_X + dx + lx, ecy - growL / 2, -1, style, geo.w, heL, geo.r, lid, slant, lower, glint, now);
-  rawEye(d, EYE_R_X + dx + lx, ecy - growR / 2, +1, style, geo.w, heR, geo.r, lid, slant, lower, glint, now);
+  int w = max(4, (int)lroundf(geo.w * k)), r = max(1, (int)lroundf(geo.r * k));
+  int half = (int)lroundf((EYE_R_X - EYE_L_X) * 0.5f * k);
+  rawEye(d, cx - half + lx, ecy - growL / 2, -1, style, w, heL, r, lid, slant, lower, glint, now);
+  rawEye(d, cx + half + lx, ecy - growR / 2, +1, style, w, heR, r, lid, slant, lower, glint, now);
 }
 
 void drawMini(U8G2 &d, int x, int y, int s, const Target &t, uint32_t now) {

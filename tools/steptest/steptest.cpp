@@ -1,6 +1,7 @@
 // PC test for src/steps.cpp: simulated walking / jogging / shaking / idle / fidgeting.
 #include "../../src/steps.h"
 #include "../../src/progress.h"
+#include "../../src/focus.h"
 #include <cstdio>
 #include <cmath>
 #include <cstdlib>
@@ -93,6 +94,49 @@ int main() {
     d.bestStreak = 7; progress::evaluate(d, 1500, 0);
     CHECK(progress::has(d, progress::B_ALL) && progress::badgeCount(d) == progress::COUNT, "collector at %d", progress::badgeCount(d));
     for (int b = 0; b < progress::COUNT; ++b) CHECK(progress::badgeName(b)[0] && progress::badgeHint(b)[0], "badge text %d", b);
+  }
+
+  // Timer / Pomodoro / Stopwatch.
+  { focus::Clock c; focus::init(c, focus::K_TIMER); uint32_t t = 4000000000u;      // near the 32-bit millis wrap
+    CHECK(focus::atStart(c) && focus::shownMs(c) == 10 * 60000u, "timer default 10 min");
+    focus::adjust(c, +5); CHECK(c.setMin == 15 && focus::shownMs(c) == 15 * 60000u, "adjust +5");
+    focus::adjust(c, -20); CHECK(c.setMin == 1, "clamped at 1 min");
+    focus::toggle(c, t);
+    focus::Event e = focus::EV_NONE;
+    for (int i = 0; i < 61 && e == focus::EV_NONE; ++i) { t += 1000; e = focus::update(c, t); }
+    CHECK(e == focus::EV_TIMER_DONE && c.alert && !c.running, "timer done (ev %d)", e);
+    CHECK(focus::update(c, t + 1000) == focus::EV_NONE, "no second event");
+    focus::toggle(c, t); CHECK(!c.alert && focus::atStart(c), "dismiss goes back to setup");
+    focus::adjust(c, +1); focus::toggle(c, t); t += 30000; focus::update(c, t); focus::addMinute(c);
+    CHECK(focus::shownMs(c) == 150000u, "2 min - 30 s + 1 min = %u", focus::shownMs(c));
+    focus::reset(c); CHECK(focus::atStart(c), "reset");
+  }
+  { focus::Clock c; focus::init(c, focus::K_POMO); uint32_t t = 1000; int focusDone = 0, breakDone = 0;
+    CHECK(focus::focusMin(c) == 25 && focus::breakMin(c) == 5, "pomodoro 25/5");
+    focus::adjust(c, +1); CHECK(focus::focusMin(c) == 50, "preset 2"); focus::adjust(c, -1); CHECK(focus::focusMin(c) == 25, "preset back");
+    focus::toggle(c, t);
+    uint32_t longBreak = 0;
+    for (int round = 0; round < 4; ++round) {
+      for (int i = 0; i < 25 * 60 + 2; ++i) { t += 1000; if (focus::update(c, t) == focus::EV_FOCUS_DONE) { focusDone++; if (round == 3) longBreak = focus::shownMs(c); break; } }
+      CHECK(c.onBreak && c.running, "break starts by itself (round %d)", round);
+      CHECK(c.alert, "alert after focus");
+      focus::toggle(c, t); CHECK(!c.alert && c.running, "dismiss keeps the break running");
+      for (int i = 0; i < 16 * 60; ++i) { t += 1000; if (focus::update(c, t) == focus::EV_BREAK_DONE) { breakDone++; break; } }
+      CHECK(!c.running && c.alert, "waits after a break");
+      focus::toggle(c, t); focus::toggle(c, t);   // dismiss, then start the next focus
+    }
+    CHECK(focusDone == 4 && breakDone == 4, "four rounds (%d %d)", focusDone, breakDone);
+    CHECK(longBreak == 15 * 60000u, "long break after round 4 = %u ms", longBreak);
+    CHECK(c.round == 0 && !c.onBreak, "set resets after the long break");
+    focus::reset(c); focus::toggle(c, t); focus::skip(c); CHECK(focus::update(c, t + 10) == focus::EV_FOCUS_DONE, "skip ends the phase");
+  }
+  { focus::Clock c; focus::init(c, focus::K_WATCH); uint32_t t = 500;
+    focus::toggle(c, t); t += 65432; focus::update(c, t);
+    CHECK(focus::shownMs(c) == 65432u, "stopwatch %u", focus::shownMs(c));
+    focus::lap(c); CHECK(c.lapSplit == 65432u, "first lap");
+    t += 1000; focus::update(c, t); focus::lap(c); CHECK(c.lapSplit == 1000u, "second lap split");
+    focus::toggle(c, t); t += 5000; focus::update(c, t); CHECK(focus::shownMs(c) == 66432u, "paused stopwatch does not run");
+    focus::reset(c); CHECK(focus::shownMs(c) == 0, "stopwatch reset");
   }
 
   printf(fails ? "\n%d FAILED\n" : "\nall step tests passed\n", fails);

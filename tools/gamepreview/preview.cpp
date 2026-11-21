@@ -20,7 +20,7 @@ using launcher::Item;
 static const Item GAMES[] = {{"Star Blaster", launcher::ICON_STAR}, {"Sniper", launcher::ICON_SNIPER}, {"Road Rush", launcher::ICON_ROAD},
                              {"Pinball", launcher::ICON_PINBALL}, {"Breakout", launcher::ICON_BREAKOUT}, {"Asteroids", launcher::ICON_ASTEROID},
                              {"Stack", launcher::ICON_STACK}, {"Quick Draw", launcher::ICON_DUEL}, {"Tilt Maze", launcher::ICON_MAZE}, {"Snake", launcher::ICON_SNAKE}, {"Back", launcher::ICON_BACK}};
-static const Item TOOLS[] = {{"Temperature", launcher::ICON_TOOLS}, {"Magic 8-ball", launcher::ICON_8BALL}, {"Dice", launcher::ICON_DICE}, {"Back", launcher::ICON_BACK}};
+static const Item TOOLS[] = {{"Temperature", launcher::ICON_TOOLS}, {"Timer", launcher::ICON_TIMER}, {"Pomodoro", launcher::ICON_POMO}, {"Stopwatch", launcher::ICON_STOPWATCH}, {"Magic 8-ball", launcher::ICON_8BALL}, {"Dice", launcher::ICON_DICE}, {"Back", launcher::ICON_BACK}};
 static const Item SETTINGS[] = {{"Brightness", launcher::ICON_BRIGHT}, {"Screen off", launcher::ICON_SCREEN_OFF}, {"Flip screen", launcher::ICON_FLIP},
                                 {"Menu style", launcher::ICON_STYLE}, {"Lyrics sync", launcher::ICON_SYNC}, {"Music pet", launcher::ICON_SPOTIFY},
                                 {"Step goal", launcher::ICON_STEPS}, {"Reset pet", launcher::ICON_RESET}, {"Back", launcher::ICON_BACK}};
@@ -62,7 +62,7 @@ static void introSheet(const char *file) {                 // the glide-in anima
 
 static void iconSheet(const char *file) {
   FILE *f = openOut(file);
-  const int total = launcher::ICON_STEPS + 1;
+  const int total = launcher::ICON_STOPWATCH + 1;
   for (int base = 0; base < total; base += 15) {
     display.clearBuffer();
     for (int k = 0; k < 15 && base + k < total; ++k) {
@@ -155,7 +155,7 @@ int main(int argc, char **argv) {
   }
   menuSheet("m_games_car.bin", GAMES, 11, 0, nullptr, {0, 4, 7, 10});
   menuSheet("m_games_ring.bin", GAMES, 11, 1, nullptr, {0, 5});
-  menuSheet("m_tools_car.bin", TOOLS, 4, 0, nullptr, {0, 1, 3});
+  menuSheet("m_tools_car.bin", TOOLS, 7, 0, nullptr, {0, 1, 2, 3, 6});
   menuSheet("m_settings_car.bin", SETTINGS, 9, 0, settingsVal, {0, 6, 8});
   menuSheet("m_settings_ring.bin", SETTINGS, 9, 1, settingsVal, {0, 6});
   menuSheet("m_online_car.bin", ONLINE, 14, 0, onlineVal, {0, 1, 13});

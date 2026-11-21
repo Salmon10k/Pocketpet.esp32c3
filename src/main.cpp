@@ -13,6 +13,8 @@
 #include "launcher.h"
 #include "steps.h"
 #include "progress.h"
+#include "focus.h"
+#include "focus_view.h"
 #include "steps_view.h"
 #include "games.h"
 #include "pet_face.h"
@@ -610,6 +612,7 @@ enum Mode {
   MODE_TEMP,
   MODE_8BALL,
   MODE_DICE,
+  MODE_TIMER,
   MODE_SNAKE,
   MODE_TILT_MAZE,
   MODE_GAME          // one of the new games in games.cpp (curGame says which)
@@ -621,8 +624,12 @@ const char *rootItems[] = {"Pet", "Fluid", "Stats", "Motion test", "Tools", "Gam
 const int ROOT_COUNT = 11;
 // Tools, Games and Settings reuse the launcher (carousel / tilt ring), so every menu looks like the home screen.
 const launcher::Item toolsMenu[] = {
-  {"Temperature", launcher::ICON_TOOLS}, {"Magic 8-ball", launcher::ICON_8BALL}, {"Dice", launcher::ICON_DICE}, {"Back", launcher::ICON_BACK}};
-const int TOOLS_COUNT = 4;
+  {"Temperature", launcher::ICON_TOOLS}, {"Timer", launcher::ICON_TIMER}, {"Pomodoro", launcher::ICON_POMO}, {"Stopwatch", launcher::ICON_STOPWATCH},
+  {"Magic 8-ball", launcher::ICON_8BALL}, {"Dice", launcher::ICON_DICE}, {"Back", launcher::ICON_BACK}};
+const int TOOLS_COUNT = 7;
+focus::Clock clocks[3];                 // timer, pomodoro, stopwatch: they keep running in the background
+int curClock = 0;
+petface::EyeAnim timerEyes;
 const launcher::Item gamesMenu[] = {
   {"Star Blaster", launcher::ICON_STAR}, {"Sniper", launcher::ICON_SNIPER}, {"Road Rush", launcher::ICON_ROAD}, {"Pinball", launcher::ICON_PINBALL},
   {"Breakout", launcher::ICON_BREAKOUT}, {"Asteroids", launcher::ICON_ASTEROID}, {"Stack", launcher::ICON_STACK}, {"Quick Draw", launcher::ICON_DUEL},
@@ -1405,6 +1412,9 @@ void setup() {
   loadStats();
   loadSettings();
   loadSteps();
+  focus::init(clocks[0], focus::K_TIMER);
+  focus::init(clocks[1], focus::K_POMO);
+  focus::init(clocks[2], focus::K_WATCH);
   if (oledUp) applyScreen();
   stamp("stats loaded");
 
@@ -1557,6 +1567,16 @@ void loop() {
     }
   }
 
+  for (int k = 0; k < 3; ++k) {                                       // timers run in the background
+    focus::Event ev = focus::update(clocks[k], now);
+    if (ev == focus::EV_NONE) continue;
+    if (ev == focus::EV_FOCUS_DONE) { prog.focus++; progDirty = true; addHappy(5); }
+    if (screenOff) { screenOff = false; display.setPowerSave(0); }    // time is up: wake the screen and show the clock
+    lastInteraction = lastActivity = now;
+    curClock = k;
+    if (mode != MODE_TIMER) enterMode(MODE_TIMER);
+  }
+
   if (cheerPending && mode == MODE_PET) { cheerPending = false; trigger(OV_CHEER, 4500); }
   else if (greetPending && mode == MODE_PET) { greetPending = false; trigger(OV_LOVE, 2800); addHappy(5); }
 
@@ -1657,8 +1677,9 @@ void loop() {
     } else if (pick >= 0 && mode == MODE_TOOLS) {
       submenuIndex = pick;
       if (pick == 0) enterMode(MODE_TEMP);
-      else if (pick == 1) enterMode(MODE_8BALL);
-      else if (pick == 2) enterMode(MODE_DICE);
+      else if (pick >= 1 && pick <= 3) { curClock = pick - 1; enterMode(MODE_TIMER); }
+      else if (pick == 4) enterMode(MODE_8BALL);
+      else if (pick == 5) enterMode(MODE_DICE);
       else enterMode(MODE_MENU);
     } else if (pick >= 0 && mode == MODE_GAMES) {
       submenuIndex = pick;
@@ -1723,6 +1744,36 @@ void loop() {
       trigger(OV_SURPRISED, 800);
       addHappy(1);
     }
+  } else if (mode == MODE_TIMER) {
+    // B: short press (on release) = start / pause / dismiss, hold 0.7 s = back to Tools. The clock keeps running.
+    static bool tmHeld = false, tmLong = false;
+    bool bShort = false;
+    focus::Clock &ck = clocks[curClock];
+    if (b) { tmHeld = true; tmLong = false; }
+    if (tmHeld) {
+      if (btnB.stable == LOW) {
+        if (!tmLong && now - btnB.changedAt >= 700) { tmLong = true; enterMode(MODE_TOOLS); }
+      } else {
+        if (!tmLong) bShort = true;
+        tmHeld = false;
+      }
+    }
+    if (mode == MODE_TIMER) {
+      if (ck.alert) { if (a || bShort || c) focus::toggle(ck, now); }
+      else {
+        if (bShort) focus::toggle(ck, now);
+        if (ck.kind == focus::K_TIMER) {
+          if (focus::atStart(ck)) { if (a) focus::adjust(ck, -1); if (c) focus::adjust(ck, +1); }
+          else { if (a) focus::reset(ck); if (c) focus::addMinute(ck); }
+        } else if (ck.kind == focus::K_POMO) {
+          if (focus::atStart(ck)) { if (a) focus::adjust(ck, -1); if (c) focus::adjust(ck, +1); }
+          else { if (a) focus::reset(ck); if (c) focus::skip(ck); }
+        } else {
+          if (a) focus::reset(ck);
+          if (c) focus::lap(ck);
+        }
+      }
+    }
   } else if (mode == MODE_TEMP) {
     if (b) enterMode(MODE_TOOLS);
   } else if (mode == MODE_8BALL) {
@@ -1780,6 +1831,15 @@ void loop() {
     } else if (mode == MODE_PET) {
       drawPet(now);
       online::drawPetBadge(display);   // tiny weather/air/night icons from cached Online data
+      for (int k = 0; k < 2; ++k) {    // a running timer / pomodoro counts down in the corner
+        if (!clocks[k].running) continue;
+        char tb[8];
+        uint32_t sec = (focus::shownMs(clocks[k]) + 999) / 1000;
+        snprintf(tb, sizeof(tb), "%u:%02u", (unsigned)(sec / 60), (unsigned)(sec % 60));
+        display.setFont(u8g2_font_5x7_tf);
+        display.drawStr(1, 7, tb);
+        break;
+      }
       {   // a 1 px line along the bottom edge fills toward today's step goal (dotted once it is reached)
         uint32_t goal = STEP_GOALS[setGoal], t = stepHist.cnt[0];
         if (t > 0) {
@@ -1807,6 +1867,11 @@ void loop() {
       lyrics_visual::draw(display, now);
     } else if (mode == MODE_LIVING_OLED) {
       living_oled::draw(display, now);
+    } else if (mode == MODE_TIMER) {
+      focus::Clock &ck = clocks[curClock];
+      petface::Target tgt = focus::mood(ck, now);
+      timerEyes.update(now, tgt, false, 0, 0, false);
+      focus::draw(display, ck, timerEyes, now);
     } else if (mode == MODE_TEMP) {
       drawTemperature();
     } else if (mode == MODE_8BALL) {
